@@ -1,0 +1,139 @@
+# MODA Backend — Recommendation Engine MVP
+
+AI-powered fashion recommendation backend. "Spotify Discover Weekly, but for fashion."
+
+**Stack:** FastAPI · PostgreSQL + pgvector · OpenCLIP (ViT-B/32) · SQLAlchemy 2.0
+
+## How it works
+
+1. **Quiz → taste anchor.** Quiz answers become short CLIP-friendly phrases
+   ("minimal style outfit", "oversized fit clothing"), each embedded with
+   OpenCLIP's text encoder and averaged into a 512-dim `quiz_embedding`.
+2. **Outfits → image embeddings.** Each curated image is embedded with the
+   same CLIP model's image encoder, so text taste and image outfits live in
+   one shared vector space.
+3. **Adaptive blend.** The live user vector is recomputed on every
+   like/dislike/save:
+
+   ```
+   user = α·quiz + β·mean(liked ∪ saved) − γ·mean(disliked ∪ skipped)
+   ```
+
+   (saves weighted 1.5× a like, skips 0.25× a dislike; result L2-normalized)
+4. **Retrieval.** pgvector cosine nearest-neighbor over outfit embeddings,
+   excluding everything already seen, over-fetching 3× then re-ranking with
+   MMR so the feed stays varied instead of 20 near-duplicates.
+5. **Explanations.** Tag overlap between the outfit and the user's liked
+   tags/profile produces the "Recommended because…" line.
+
+## Quick start
+
+```bash
+# 1. Database
+docker compose up -d
+
+# 2. Python env
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+
+# 3. Ingest your curated images (see Dataset section)
+python -m scripts.ingest --csv data/outfits.csv --blend-caption
+
+# 4. Run the API
+uvicorn app.main:app --reload
+
+# 5. Smoke test the full loop
+python -m scripts.smoke_test
+```
+
+Interactive docs: http://localhost:8000/docs
+
+First quiz/ingest call downloads the CLIP weights (~600MB) once.
+
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/users` | Create user `{email, username}` |
+| POST | `/quiz` | Submit style quiz → builds taste profile + embedding |
+| GET | `/recommendations?user_id=&k=20` | Personalized feed with scores + explanations |
+| POST | `/feedback` | `{user_id, outfit_id, interaction_type: like\|dislike\|save\|skip}` |
+| GET | `/saved?user_id=` | Saved outfits |
+| GET | `/outfits/{id}` | Single outfit |
+| GET | `/health` | Liveness |
+
+Example quiz payload:
+
+```json
+{
+  "user_id": "…",
+  "aesthetics": ["minimal", "streetwear", "monochrome"],
+  "colors": ["black", "white", "grey"],
+  "fits": ["oversized", "tailored"],
+  "occasions": ["everyday", "nightlife"],
+  "brands": [],
+  "inspirations": []
+}
+```
+
+## Dataset (curated real images)
+
+Ingestion takes a CSV (`data/outfits.sample.csv` is a template):
+
+```
+image,caption,style_tags,color_tags,occasion_tags
+images/fit_001.jpg,"Neutral oversized minimal streetwear outfit…",streetwear|minimal,black|neutral,everyday
+```
+
+Practical guidance for curating:
+
+- **Target 300–1000 images for a convincing MVP.** Below ~200, every user
+  sees roughly the same feed regardless of taste.
+- **Cover the aesthetic axes in your quiz** (streetwear, minimal, old money,
+  techwear, etc.) with at least 30–50 images each, or recommendations for
+  that aesthetic will be weak.
+- **Single subject, full outfit visible, clean-ish background.** CLIP
+  embeddings degrade on collages, heavy text overlays, and crowded scenes.
+  `--blend-caption` partially compensates.
+- **Captions matter** if you blend: keep them short, concrete, and visual
+  ("black cargo pants with utility jacket"), not poetic.
+- **Licensing:** for anything beyond local testing, stick to images you have
+  rights to — Unsplash/Pexels fashion photography, brand press kits, or
+  creator partnerships. Scraping Pinterest/Instagram for a public demo is a
+  takedown (and ToS) risk.
+
+## Tuning
+
+All knobs live in `.env`:
+
+- `ALPHA_QUIZ / BETA_LIKED / GAMMA_DISLIKED` — how fast taste drifts from the
+  quiz anchor toward behavior. Raise β for faster adaptation, raise α for
+  stability.
+- `DIVERSITY_LAMBDA` — 0 = pure relevance (feed converges hard),
+  0.3 default, 0.5+ = exploratory feed.
+- The ivfflat index is created at table creation; for best recall, drop and
+  rebuild it after ingesting your full dataset
+  (`REINDEX INDEX ix_outfits_embedding_cosine;` or recreate with higher `lists`).
+
+## Project layout
+
+```
+app/
+  main.py          # FastAPI routes
+  recommender.py   # blend formula, retrieval, MMR, explanations
+  embeddings.py    # OpenCLIP wrapper (lazy singleton)
+  models.py        # users / outfits / interactions (pgvector columns)
+  schemas.py       # request/response models
+  config.py, db.py
+scripts/
+  ingest.py        # CSV → embedded outfit rows
+  smoke_test.py    # end-to-end loop test
+```
+
+## Next steps (Phase 2 hooks already in place)
+
+- Session-based recommendations: add a session decay weight in
+  `_weighted_mean` (recent interactions count more).
+- Swap pgvector → FAISS/Pinecone behind `retrieve_candidates` only.
+- Auth: replace the open `user_id` params with JWT (FastAPI `Depends`).

@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: moda-db
+    environment:
+      POSTGRES_USER: moda
+      POSTGRES_PASSWORD: moda
+      POSTGRES_DB: moda
+    ports:
+      - "5432:5432"
+    volumes:
+      - moda_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moda"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  moda_pgdata:

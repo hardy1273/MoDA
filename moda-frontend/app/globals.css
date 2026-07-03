@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-[#111110] text-ink antialiased;
+}
+
+/* The app lives in a phone-width canvas, framed like the Figma artboards */
+.canvas {
+  @apply mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-paper;
+}
+
+:focus-visible {
+  outline: 2px solid #0a0a0a;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
