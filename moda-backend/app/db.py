@@ -1,7 +1,11 @@
-from sqlalchemy import create_engine, text
+from pathlib import Path
+
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import get_settings
+
+BASELINE_REVISION = "0001"
 
 settings = get_settings()
 
@@ -21,12 +25,29 @@ def get_db():
         db.close()
 
 
+def _alembic_config():
+    from alembic.config import Config
+
+    root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    return cfg
+
+
 def init_db() -> None:
-    """Create the pgvector extension and all tables."""
+    """Bring the schema to the latest Alembic revision.
+
+    Databases created before Alembic (via create_all) are adopted by
+    stamping the baseline revision first, then upgrading normally.
+    """
+    from alembic import command
+
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.commit()
-    # Import models so they register with Base before create_all
-    from app import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    cfg = _alembic_config()
+    inspector = inspect(engine)
+    if inspector.has_table("users") and not inspector.has_table("alembic_version"):
+        command.stamp(cfg, BASELINE_REVISION)
+    command.upgrade(cfg, "head")

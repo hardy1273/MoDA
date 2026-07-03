@@ -34,7 +34,7 @@ docker compose up -d
 
 # 2. Python env
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # or requirements-dev.txt for tests/migrations
 cp .env.example .env
 
 # 3. Ingest your curated images (see Dataset section)
@@ -116,6 +116,20 @@ All knobs live in `.env`:
   rebuild it after ingesting your full dataset
   (`REINDEX INDEX ix_outfits_embedding_cosine;` or recreate with higher `lists`).
 
+## Tests & migrations
+
+```bash
+pip install -r requirements-dev.txt
+
+pytest                      # unit tests (no DB / CLIP needed)
+
+# Schema is managed by Alembic. init_db() (called on API startup and by
+# scripts) auto-upgrades to head; pre-Alembic databases are adopted by
+# stamping the baseline revision. Manual usage:
+alembic upgrade head
+alembic revision -m "add column x"   # new migration
+```
+
 ## Project layout
 
 ```
@@ -126,9 +140,11 @@ app/
   models.py        # users / outfits / interactions (pgvector columns)
   schemas.py       # request/response models
   config.py, db.py
+alembic/           # migrations (0001 = baseline schema)
 scripts/
   ingest.py        # CSV → embedded outfit rows
   smoke_test.py    # end-to-end loop test
+tests/             # pytest suite for recommender logic & schemas
 ```
 
 ## Next steps (Phase 2 hooks already in place)
