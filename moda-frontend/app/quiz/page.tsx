@@ -86,8 +86,7 @@ export default function Quiz() {
 
   async function finish() {
     setBusy(true);
-    const userId = session?.userId ?? "demo-user";
-    const profile = await submitQuiz(userId, {
+    const profile = await submitQuiz({
       aesthetics: picks.aesthetics,
       fits: picks.fits,
       colors: picks.colors,

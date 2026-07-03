@@ -17,7 +17,7 @@ export default function Feed() {
 
   useEffect(() => {
     let cancelled = false;
-    getFeed(session?.userId ?? "demo-user", 12).then((r) => {
+    getFeed(12).then((r) => {
       if (cancelled) return;
       setItems(r.items);
       setLive(r.live);

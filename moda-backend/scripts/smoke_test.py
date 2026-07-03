@@ -4,7 +4,7 @@ Run AFTER ingesting outfits and starting the API:
     python -m scripts.smoke_test --base http://localhost:8000
 
 It will:
-  1. create a throwaway user
+  1. sign up a throwaway user (JWT auth)
   2. submit a style quiz
   3. fetch recommendations
   4. like the top item, dislike the last item
@@ -31,15 +31,20 @@ def main() -> None:
     base = args.base.rstrip("/")
 
     suffix = rand_suffix()
-    user = requests.post(
-        f"{base}/users",
-        json={"email": f"smoke_{suffix}@moda.test", "username": f"smoke_{suffix}"},
+    signup = requests.post(
+        f"{base}/auth/signup",
+        json={
+            "email": f"smoke_{suffix}@example.com",
+            "username": f"smoke_{suffix}",
+            "password": "smoke-test-password",
+        },
         timeout=30,
     ).json()
+    user = signup["user"]
+    headers = {"Authorization": f"Bearer {signup['access_token']}"}
     print(f"Created user {user['username']} ({user['id']})")
 
     quiz = {
-        "user_id": user["id"],
         "aesthetics": ["minimal", "streetwear", "monochrome"],
         "colors": ["black", "white", "grey"],
         "fits": ["oversized", "tailored"],
@@ -47,11 +52,11 @@ def main() -> None:
         "brands": [],
         "inspirations": [],
     }
-    result = requests.post(f"{base}/quiz", json=quiz, timeout=120).json()
+    result = requests.post(f"{base}/quiz", json=quiz, headers=headers, timeout=120).json()
     print(f"\nProfile: {result['profile_text']}")
 
     feed = requests.get(
-        f"{base}/recommendations", params={"user_id": user["id"], "k": 10}, timeout=60
+        f"{base}/recommendations", params={"k": 10}, headers=headers, timeout=60
     ).json()
     items = feed["items"]
     if not items:
@@ -67,13 +72,14 @@ def main() -> None:
     for outfit_id, action in [(liked, "like"), (disliked, "dislike")]:
         requests.post(
             f"{base}/feedback",
-            json={"user_id": user["id"], "outfit_id": outfit_id, "interaction_type": action},
+            json={"outfit_id": outfit_id, "interaction_type": action},
+            headers=headers,
             timeout=30,
         )
     print(f"\nLiked top item, disliked last item. Re-fetching feed...")
 
     feed2 = requests.get(
-        f"{base}/recommendations", params={"user_id": user["id"], "k": 10}, timeout=60
+        f"{base}/recommendations", params={"k": 10}, headers=headers, timeout=60
     ).json()
     print(f"\nUpdated recommendations:")
     for it in feed2["items"]:

@@ -4,11 +4,17 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
 
-# ---------- Users ----------
+# ---------- Auth / Users ----------
 
-class UserCreate(BaseModel):
+class SignupIn(BaseModel):
     email: EmailStr
     username: str = Field(min_length=2, max_length=64)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
 
 
 class UserOut(BaseModel):
@@ -21,10 +27,15 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AuthOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+
 # ---------- Quiz ----------
 
 class QuizSubmission(BaseModel):
-    user_id: uuid.UUID
     aesthetics: list[str] = Field(default_factory=list, examples=[["minimal", "streetwear"]])
     colors: list[str] = Field(default_factory=list, examples=[["black", "neutral tones"]])
     fits: list[str] = Field(default_factory=list, examples=[["oversized", "tailored"]])
@@ -67,7 +78,6 @@ class FeedOut(BaseModel):
 # ---------- Feedback ----------
 
 class FeedbackIn(BaseModel):
-    user_id: uuid.UUID
     outfit_id: uuid.UUID
     interaction_type: str = Field(pattern="^(like|dislike|save|skip)$")
 

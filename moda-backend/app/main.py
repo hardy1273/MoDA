@@ -1,5 +1,6 @@
-import uuid
 from contextlib import asynccontextmanager
+
+import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models, recommender, schemas
+from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.config import get_settings
 from app.db import get_db, init_db
 
@@ -19,7 +21,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="MODA API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="MODA API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,13 +31,6 @@ app.add_middleware(
 )
 
 
-def _get_user(db: Session, user_id: uuid.UUID) -> models.User:
-    user = db.get(models.User, user_id)
-    if not user:
-        raise HTTPException(404, "User not found")
-    return user
-
-
 # ---------- Health ----------
 
 @app.get("/health")
@@ -43,10 +38,10 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- Users ----------
+# ---------- Auth ----------
 
-@app.post("/users", response_model=schemas.UserOut, status_code=201)
-def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+@app.post("/auth/signup", response_model=schemas.AuthOut, status_code=201)
+def signup(payload: schemas.SignupIn, db: Session = Depends(get_db)):
     exists = db.scalar(
         select(models.User).where(
             (models.User.email == payload.email) | (models.User.username == payload.username)
@@ -54,23 +49,38 @@ def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
     )
     if exists:
         raise HTTPException(409, "Email or username already taken")
-    user = models.User(email=payload.email, username=payload.username)
+    user = models.User(
+        email=payload.email,
+        username=payload.username,
+        password_hash=hash_password(payload.password),
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
+    return {"access_token": create_access_token(user.id), "user": user}
+
+
+@app.post("/auth/login", response_model=schemas.AuthOut)
+def login(payload: schemas.LoginIn, db: Session = Depends(get_db)):
+    user = db.scalar(select(models.User).where(models.User.email == payload.email))
+    if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(401, "Incorrect email or password")
+    return {"access_token": create_access_token(user.id), "user": user}
+
+
+@app.get("/me", response_model=schemas.UserOut)
+def me(user: models.User = Depends(get_current_user)):
     return user
-
-
-@app.get("/users/{user_id}", response_model=schemas.UserOut)
-def get_user(user_id: uuid.UUID, db: Session = Depends(get_db)):
-    return _get_user(db, user_id)
 
 
 # ---------- Quiz ----------
 
 @app.post("/quiz", response_model=schemas.QuizResult)
-def submit_quiz(payload: schemas.QuizSubmission, db: Session = Depends(get_db)):
-    user = _get_user(db, payload.user_id)
+def submit_quiz(
+    payload: schemas.QuizSubmission,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     profile_text = recommender.apply_quiz(db, user, payload)
     db.commit()
     return schemas.QuizResult(user_id=user.id, profile_text=profile_text)
@@ -80,11 +90,10 @@ def submit_quiz(payload: schemas.QuizSubmission, db: Session = Depends(get_db)):
 
 @app.get("/recommendations", response_model=schemas.FeedOut)
 def get_recommendations(
-    user_id: uuid.UUID,
     k: int = settings.default_feed_size,
+    user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    user = _get_user(db, user_id)
     try:
         items = recommender.recommend(db, user, k=min(k, 100))
     except ValueError as e:
@@ -95,8 +104,11 @@ def get_recommendations(
 # ---------- Feedback ----------
 
 @app.post("/feedback", response_model=schemas.FeedbackOut)
-def submit_feedback(payload: schemas.FeedbackIn, db: Session = Depends(get_db)):
-    user = _get_user(db, payload.user_id)
+def submit_feedback(
+    payload: schemas.FeedbackIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     if not db.get(models.Outfit, payload.outfit_id):
         raise HTTPException(404, "Outfit not found")
 
@@ -129,13 +141,15 @@ def submit_feedback(payload: schemas.FeedbackIn, db: Session = Depends(get_db)):
 # ---------- Saved outfits ----------
 
 @app.get("/saved", response_model=list[schemas.OutfitOut])
-def get_saved(user_id: uuid.UUID, db: Session = Depends(get_db)):
-    _get_user(db, user_id)
+def get_saved(
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     rows = db.scalars(
         select(models.Outfit)
         .join(models.Interaction, models.Interaction.outfit_id == models.Outfit.id)
         .where(
-            models.Interaction.user_id == user_id,
+            models.Interaction.user_id == user.id,
             models.Interaction.interaction_type == "save",
         )
         .order_by(models.Interaction.created_at.desc())

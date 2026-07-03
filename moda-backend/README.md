@@ -53,21 +53,25 @@ First quiz/ingest call downloads the CLIP weights (~600MB) once.
 
 ## API
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/users` | Create user `{email, username}` |
-| POST | `/quiz` | Submit style quiz → builds taste profile + embedding |
-| GET | `/recommendations?user_id=&k=20` | Personalized feed with scores + explanations |
-| POST | `/feedback` | `{user_id, outfit_id, interaction_type: like\|dislike\|save\|skip}` |
-| GET | `/saved?user_id=` | Saved outfits |
-| GET | `/outfits/{id}` | Single outfit |
-| GET | `/health` | Liveness |
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/auth/signup` | — | `{email, username, password}` → JWT + user |
+| POST | `/auth/login` | — | `{email, password}` → JWT + user |
+| GET | `/me` | Bearer | Current user |
+| POST | `/quiz` | Bearer | Submit style quiz → builds taste profile + embedding |
+| GET | `/recommendations?k=20` | Bearer | Personalized feed with scores + explanations |
+| POST | `/feedback` | Bearer | `{outfit_id, interaction_type: like\|dislike\|save\|skip}` |
+| GET | `/saved` | Bearer | Saved outfits |
+| GET | `/outfits/{id}` | — | Single outfit |
+| GET | `/health` | — | Liveness |
+
+Protected routes take `Authorization: Bearer <token>`; tokens are HS256 JWTs
+signed with `JWT_SECRET` (set a real value outside local dev).
 
 Example quiz payload:
 
 ```json
 {
-  "user_id": "…",
   "aesthetics": ["minimal", "streetwear", "monochrome"],
   "colors": ["black", "white", "grey"],
   "fits": ["oversized", "tailored"],
@@ -152,4 +156,3 @@ tests/             # pytest suite for recommender logic & schemas
 - Session-based recommendations: add a session decay weight in
   `_weighted_mean` (recent interactions count more).
 - Swap pgvector → FAISS/Pinecone behind `retrieve_candidates` only.
-- Auth: replace the open `user_id` params with JWT (FastAPI `Depends`).

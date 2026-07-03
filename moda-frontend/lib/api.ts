@@ -75,39 +75,67 @@ const demoFeed = (k: number): FeedItem[] =>
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+function authHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem("moda.session");
+    const token = raw ? (JSON.parse(raw)?.token as string | null) : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
   });
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json();
 }
 
+// fetch() rejects with TypeError when the backend is unreachable; HTTP
+// errors (409 email taken, 401 bad password, …) arrive as Error above.
+// Demo fallback should only kick in for the former.
+const isNetworkError = (e: unknown) => e instanceof TypeError;
+
 export type ApiUser = { id: string; email: string; username: string; profile_text: string | null };
+export type AuthResult = { user: ApiUser; token: string | null };
 
 // ---------------------------------------------------------------------------
 // Public API (each call degrades gracefully to demo mode)
 // ---------------------------------------------------------------------------
 
-export async function createUser(username: string, email: string): Promise<ApiUser> {
+export async function signup(username: string, email: string, password: string): Promise<AuthResult> {
   try {
-    return await http<ApiUser>("/users", {
+    const r = await http<{ access_token: string; user: ApiUser }>("/auth/signup", {
       method: "POST",
-      body: JSON.stringify({ username, email }),
+      body: JSON.stringify({ username, email, password }),
     });
-  } catch {
-    return { id: "demo-user", email, username, profile_text: null };
+    return { user: r.user, token: r.access_token };
+  } catch (e) {
+    if (isNetworkError(e)) {
+      return { user: { id: "demo-user", email, username, profile_text: null }, token: null };
+    }
+    throw e; // e.g. 409 email/username taken — let the form show it
   }
 }
 
-export async function submitQuiz(userId: string, a: QuizAnswers): Promise<string> {
+export async function login(email: string, password: string): Promise<AuthResult> {
+  const r = await http<{ access_token: string; user: ApiUser }>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  return { user: r.user, token: r.access_token };
+}
+
+export async function submitQuiz(a: QuizAnswers): Promise<string> {
   const fits = a.layering ? [...a.fits, "layered"] : a.fits;
   try {
     const r = await http<{ profile_text: string }>("/quiz", {
       method: "POST",
       body: JSON.stringify({
-        user_id: userId,
         aesthetics: a.aesthetics,
         colors: a.colors,
         fits,
@@ -122,9 +150,9 @@ export async function submitQuiz(userId: string, a: QuizAnswers): Promise<string
   }
 }
 
-export async function getFeed(userId: string, k = 12): Promise<{ items: FeedItem[]; live: boolean }> {
+export async function getFeed(k = 12): Promise<{ items: FeedItem[]; live: boolean }> {
   try {
-    const r = await http<{ items: FeedItem[] }>(`/recommendations?user_id=${userId}&k=${k}`);
+    const r = await http<{ items: FeedItem[] }>(`/recommendations?k=${k}`);
     return { items: r.items, live: true };
   } catch {
     return { items: demoFeed(k), live: false };
@@ -141,7 +169,6 @@ export async function getOutfit(id: string): Promise<Outfit | null> {
 }
 
 export async function sendFeedback(
-  userId: string,
   outfitId: string,
   type: "like" | "dislike" | "save" | "skip",
 ): Promise<void> {
@@ -149,16 +176,16 @@ export async function sendFeedback(
   try {
     await http("/feedback", {
       method: "POST",
-      body: JSON.stringify({ user_id: userId, outfit_id: outfitId, interaction_type: type }),
+      body: JSON.stringify({ outfit_id: outfitId, interaction_type: type }),
     });
   } catch {
-    /* offline — local state still updates */
+    /* offline or logged out — local state still updates */
   }
 }
 
-export async function getSaved(userId: string): Promise<Outfit[] | null> {
+export async function getSaved(): Promise<Outfit[] | null> {
   try {
-    return await http<Outfit[]>(`/saved?user_id=${userId}`);
+    return await http<Outfit[]>("/saved");
   } catch {
     return null; // caller falls back to locally-saved demo items
   }

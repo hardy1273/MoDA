@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Logo } from "@/components/Logo";
-import { createUser } from "@/lib/api";
+import { signup } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 const inputCls =
@@ -24,15 +25,32 @@ export default function SignUp() {
       setError("Enter a name and a valid email to continue.");
       return;
     }
-    if (password.length > 0 && password !== confirm) {
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirm) {
       setError("Passwords don't match.");
       return;
     }
     setBusy(true);
     setError(null);
-    const user = await createUser(name.trim().toLowerCase().replace(/\s+/g, "_"), email.trim());
-    setSession({ userId: user.id, username: name.trim(), profileText: null });
-    router.push("/quiz");
+    try {
+      const { user, token } = await signup(
+        name.trim().toLowerCase().replace(/\s+/g, "_"),
+        email.trim(),
+        password,
+      );
+      setSession({ userId: user.id, username: name.trim(), profileText: null, token });
+      router.push("/quiz");
+    } catch (e) {
+      setError(
+        e instanceof Error && e.message.startsWith("409")
+          ? "That email or username is already taken."
+          : "Sign up failed — please try again.",
+      );
+      setBusy(false);
+    }
   }
 
   return (
@@ -48,7 +66,7 @@ export default function SignUp() {
         {error && <p className="text-center text-[13px] text-signal">{error}</p>}
 
         <p className="text-center text-[13px]">
-          Already have an account? <span className="underline">Login.</span>
+          Already have an account? <Link href="/login" className="underline">Login.</Link>
         </p>
         <button
           onClick={submit}

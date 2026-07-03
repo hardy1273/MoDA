@@ -7,7 +7,12 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Outfit, sendFeedback } from "./api";
 
-type Session = { userId: string; username: string; profileText: string | null };
+type Session = {
+  userId: string;
+  username: string;
+  profileText: string | null;
+  token: string | null; // null = demo mode (backend unreachable at signup)
+};
 type CartItem = { outfit: Outfit; size: string; qty: number };
 
 type Store = {
@@ -92,7 +97,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           if (next[o.id]) delete next[o.id];
           else {
             next[o.id] = o;
-            if (uid) void sendFeedback(uid, o.id, "like");
+            if (uid) void sendFeedback(o.id, "like");
           }
           return next;
         }),
@@ -102,12 +107,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           if (next[o.id]) delete next[o.id];
           else {
             next[o.id] = o;
-            if (uid) void sendFeedback(uid, o.id, "save");
+            if (uid) void sendFeedback(o.id, "save");
           }
           return next;
         }),
       dismiss: (o) => {
-        if (uid) void sendFeedback(uid, o.id, "dislike");
+        if (uid) void sendFeedback(o.id, "dislike");
       },
     };
   }, [session, cart, liked, saved]);

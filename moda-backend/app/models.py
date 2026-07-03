@@ -24,6 +24,9 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Nullable so users created before auth landed keep working (they just
+    # can't log in until a password is set)
+    password_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     profile_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Frozen embedding from the onboarding quiz (the "anchor" of taste)

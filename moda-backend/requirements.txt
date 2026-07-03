@@ -11,3 +11,5 @@ requests>=2.31
 python-dotenv>=1.0
 torch>=2.2
 open_clip_torch>=2.24
+PyJWT>=2.8
+bcrypt>=4.1

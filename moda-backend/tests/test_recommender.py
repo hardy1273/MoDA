@@ -16,7 +16,7 @@ from app.schemas import QuizSubmission
 
 
 def quiz(**kwargs) -> QuizSubmission:
-    return QuizSubmission(user_id=uuid.uuid4(), **kwargs)
+    return QuizSubmission(**kwargs)
 
 
 # ---------------------------------------------------------------------------

@@ -14,10 +14,10 @@ export default function Closet() {
   const [remote, setRemote] = useState<Outfit[] | null>(null);
 
   useEffect(() => {
-    if (session?.userId && session.userId !== "demo-user") {
-      getSaved(session.userId).then(setRemote);
+    if (session?.token) {
+      getSaved().then(setRemote);
     }
-  }, [session?.userId]);
+  }, [session?.token]);
 
   const local = Object.values(saved);
   const merged = new Map<string, Outfit>();

@@ -12,7 +12,7 @@ export default function Explore() {
   const [items, setItems] = useState<FeedItem[] | null>(null);
 
   useEffect(() => {
-    getFeed("demo-user", 24).then((r) => setItems(r.items));
+    getFeed(24).then((r) => setItems(r.items));
   }, []);
 
   return (

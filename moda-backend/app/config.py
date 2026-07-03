@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     default_feed_size: int = 20
     diversity_lambda: float = 0.3
 
+    # Auth — override jwt_secret in .env for anything beyond local dev
+    jwt_secret: str = "dev-only-jwt-secret-change-me-for-production-use"
+    jwt_expires_minutes: int = 60 * 24 * 7  # 7 days
+
 
 @lru_cache
 def get_settings() -> Settings:
