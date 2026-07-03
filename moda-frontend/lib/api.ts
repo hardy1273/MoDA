@@ -21,6 +21,8 @@ export type QuizAnswers = {
   colors: string[];
   fits: string[];
   occasions: string[];
+  brands: string[];
+  inspirations: string[];
   layering: boolean;
 };
 
@@ -110,8 +112,8 @@ export async function submitQuiz(userId: string, a: QuizAnswers): Promise<string
         colors: a.colors,
         fits,
         occasions: a.occasions,
-        brands: [],
-        inspirations: [],
+        brands: a.brands,
+        inspirations: a.inspirations,
       }),
     });
     return r.profile_text;

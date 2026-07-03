@@ -1,8 +1,10 @@
 "use client";
 
 // Style profile quiz.
-// Steps follow the wireframe (aesthetic → fit → layering → color), then a
-// "Your style profile" summary screen with edit affordances, then the feed.
+// Steps follow the wireframe (aesthetic → fit → layering → color →
+// occasions → brands → inspirations), then a "Your style profile" summary
+// screen with edit affordances, then the feed. Brands and inspirations are
+// optional free-text steps with suggestion chips.
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -10,11 +12,22 @@ import { Logo } from "@/components/Logo";
 import { submitQuiz } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
+type StepKey =
+  | "aesthetics"
+  | "fits"
+  | "layering"
+  | "colors"
+  | "occasions"
+  | "brands"
+  | "inspirations";
+
 type StepDef = {
-  key: "aesthetics" | "fits" | "layering" | "colors";
+  key: StepKey;
   question: string;
   options: string[];
   multi: boolean;
+  freeText?: boolean; // options become suggestions; user can also type their own
+  hint?: string;
 };
 
 const STEPS: StepDef[] = [
@@ -22,20 +35,29 @@ const STEPS: StepDef[] = [
   { key: "fits", question: "how do you like the fit?", options: ["relaxed", "oversized", "slim", "tailored"], multi: true },
   { key: "layering", question: "do you layer?", options: ["yes", "no"], multi: false },
   { key: "colors", question: "your color profile?", options: ["monochrome", "neutrals", "earth tones", "pastels", "bold"], multi: true },
+  { key: "occasions", question: "what are you dressing for?", options: ["everyday", "work", "formal", "nightlife", "casual", "travel"], multi: true },
+  { key: "brands", question: "brands you love?", options: ["nike", "adidas", "uniqlo", "zara", "cos", "carhartt"], multi: true, freeText: true, hint: "optional — pick or type your own" },
+  { key: "inspirations", question: "style inspirations?", options: ["90s hip hop", "parisian chic", "scandi minimalism", "y2k", "japanese streetwear"], multi: true, freeText: true, hint: "optional — an era, scene, or icon" },
 ];
+
+const EMPTY_PICKS: Record<StepKey, string[]> = {
+  aesthetics: [],
+  fits: [],
+  layering: [],
+  colors: [],
+  occasions: [],
+  brands: [],
+  inspirations: [],
+};
 
 export default function Quiz() {
   const router = useRouter();
   const { session, setProfileText } = useStore();
   const [step, setStep] = useState(0);
-  const [picks, setPicks] = useState<Record<string, string[]>>({
-    aesthetics: [],
-    fits: [],
-    layering: [],
-    colors: [],
-  });
+  const [picks, setPicks] = useState<Record<StepKey, string[]>>(EMPTY_PICKS);
   const [phase, setPhase] = useState<"quiz" | "summary">("quiz");
   const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState("");
 
   const def = STEPS[step];
 
@@ -47,7 +69,17 @@ export default function Quiz() {
     });
   }
 
+  function addDraft() {
+    const v = draft.trim().toLowerCase();
+    if (!v) return;
+    setPicks((p) =>
+      p[def.key].includes(v) ? p : { ...p, [def.key]: [...p[def.key], v] },
+    );
+    setDraft("");
+  }
+
   function next() {
+    setDraft("");
     if (step < STEPS.length - 1) setStep(step + 1);
     else setPhase("summary");
   }
@@ -59,7 +91,9 @@ export default function Quiz() {
       aesthetics: picks.aesthetics,
       fits: picks.fits,
       colors: picks.colors,
-      occasions: ["everyday"],
+      occasions: picks.occasions.length ? picks.occasions : ["everyday"],
+      brands: picks.brands,
+      inspirations: picks.inspirations,
       layering: picks.layering[0] === "yes",
     });
     setProfileText(profile);
@@ -71,7 +105,15 @@ export default function Quiz() {
     { label: "fit", value: picks.fits.join(", ") || "—", jump: 1 },
     { label: "layering", value: picks.layering[0] ?? "—", jump: 2 },
     { label: "color profile", value: picks.colors.join(", ") || "—", jump: 3 },
+    { label: "occasions", value: picks.occasions.join(", ") || "—", jump: 4 },
+    { label: "brands", value: picks.brands.join(", ") || "—", jump: 5 },
+    { label: "inspirations", value: picks.inspirations.join(", ") || "—", jump: 6 },
   ];
+
+  // Free-text picks that aren't in the suggestion list still need a chip
+  const visibleOptions = def.freeText
+    ? [...def.options, ...picks[def.key].filter((v) => !def.options.includes(v))]
+    : def.options;
 
   return (
     <main className="flex flex-1 flex-col px-7 pt-6">
@@ -83,9 +125,12 @@ export default function Quiz() {
 
       {phase === "quiz" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-8 pb-20">
-          <h2 className="font-display text-[22px] italic">{def.question}</h2>
-          <div className="flex flex-wrap justify-center gap-3">
-            {def.options.map((opt) => {
+          <div className="text-center">
+            <h2 className="font-display text-[22px] italic">{def.question}</h2>
+            {def.hint && <p className="mt-1 text-[11px] italic text-faint">{def.hint}</p>}
+          </div>
+          <div className="flex max-w-md flex-wrap justify-center gap-3">
+            {visibleOptions.map((opt) => {
               const active = picks[def.key].includes(opt);
               return (
                 <button
@@ -101,6 +146,29 @@ export default function Quiz() {
               );
             })}
           </div>
+          {def.freeText && (
+            <div className="flex items-center gap-2">
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addDraft();
+                  }
+                }}
+                placeholder="type your own…"
+                aria-label={`Add your own ${def.key.slice(0, -1)}`}
+                className="rounded-lg border border-ink/60 bg-paper px-4 py-2 text-[14px] outline-none placeholder:italic placeholder:text-faint focus:border-ink"
+              />
+              <button
+                onClick={addDraft}
+                className="rounded-lg border border-ink/60 px-3 py-2 text-[14px] font-semibold hover:bg-mist"
+              >
+                add
+              </button>
+            </div>
+          )}
           <button onClick={next} className="text-[12px] italic text-faint underline-offset-2 hover:underline">
             skip
           </button>
@@ -115,7 +183,7 @@ export default function Quiz() {
       ) : (
         <div className="flex flex-1 flex-col items-center justify-center gap-7 pb-20">
           <h2 className="text-[17px] font-semibold">Your style profile</h2>
-          <dl className="flex flex-col items-center gap-5">
+          <dl className="flex flex-col items-center gap-4">
             {summaryRows.map((row) => (
               <div key={row.label} className="text-center">
                 <dt className="text-[15px] font-semibold">{row.label}</dt>
