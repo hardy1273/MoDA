@@ -56,13 +56,14 @@ class Outfit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
-        # IVFFlat index for fast approximate nearest-neighbor search (cosine).
-        # Note: build this AFTER you have a meaningful number of rows for best recall.
+        # HNSW index for approximate nearest-neighbor search (cosine).
+        # Chosen over ivfflat: recall doesn't depend on row count vs a fixed
+        # `lists` (ivfflat with lists=100 on a few hundred rows returned ~1%
+        # of vectors per probe and made every feed nearly identical).
         Index(
             "ix_outfits_embedding_cosine",
             "embedding",
-            postgresql_using="ivfflat",
-            postgresql_with={"lists": 100},
+            postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )

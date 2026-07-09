@@ -116,9 +116,9 @@ All knobs live in `.env`:
   stability.
 - `DIVERSITY_LAMBDA` — 0 = pure relevance (feed converges hard),
   0.3 default, 0.5+ = exploratory feed.
-- The ivfflat index is created at table creation; for best recall, drop and
-  rebuild it after ingesting your full dataset
-  (`REINDEX INDEX ix_outfits_embedding_cosine;` or recreate with higher `lists`).
+- Vector search uses an HNSW index (cosine). Unlike ivfflat, its recall
+  doesn't depend on dataset size relative to a fixed `lists` parameter and it
+  needs no rebuild after ingesting — nothing to tune at MVP scale.
 
 ## Tests & migrations
 
