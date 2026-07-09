@@ -134,12 +134,16 @@ def main() -> None:
 
     rows: dict[str, dict] = {}  # photo id -> row (dedup across queries)
     requests_made = 0
+    rate_limited = False
     for query, style, occasion in QUERIES:
+        if rate_limited:
+            break
         for page in range(1, args.pages + 1):
             try:
                 data = search_page(key, query, page, args.per_page)
             except RuntimeError as e:
                 print(f"\nStopping early: {e}", file=sys.stderr)
+                rate_limited = True
                 break
             requests_made += 1
             new = 0
@@ -151,11 +155,8 @@ def main() -> None:
                 new += 1
             print(f"[{requests_made:>2}] {query!r} p{page}: +{new} (total {len(rows)})")
             if page >= data.get("total_pages", 0):
-                break
+                break  # this query has no more pages — move on to the next one
             time.sleep(args.sleep)
-        else:
-            continue
-        break  # propagate rate-limit stop out of the outer loop
 
     if not rows:
         sys.exit("No photos fetched — check your access key.")
