@@ -23,6 +23,7 @@ export type QuizAnswers = {
   occasions: string[];
   brands: string[];
   inspirations: string[];
+  likedOutfitIds: string[]; // taste-calibration picks
   layering: boolean;
 };
 
@@ -142,6 +143,7 @@ export async function submitQuiz(a: QuizAnswers): Promise<string> {
         occasions: a.occasions,
         brands: a.brands,
         inspirations: a.inspirations,
+        liked_outfit_ids: a.likedOutfitIds.filter((id) => !id.startsWith("demo-")),
       }),
     });
     return r.profile_text;
@@ -156,6 +158,14 @@ export async function getFeed(k = 12): Promise<{ items: FeedItem[]; live: boolea
     return { items: r.items, live: true };
   } catch {
     return { items: demoFeed(k), live: false };
+  }
+}
+
+export async function getSampleOutfits(n = 12): Promise<Outfit[]> {
+  try {
+    return await http<Outfit[]>(`/outfits/sample?n=${n}`);
+  } catch {
+    return DEMO_OUTFITS.slice(0, n);
   }
 }
 

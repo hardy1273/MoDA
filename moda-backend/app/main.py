@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import models, recommender, schemas
@@ -158,6 +158,25 @@ def get_saved(
 
 
 # ---------- Outfits ----------
+
+@app.get("/outfits/sample", response_model=list[schemas.OutfitOut])
+def sample_outfits(
+    n: int = 12,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A visually diverse sample for quiz-time taste calibration.
+
+    Random pool, then MMR with relevance held constant — which reduces to
+    picking maximally spread-out embeddings.
+    """
+    n = min(max(n, 1), 24)
+    pool = db.scalars(
+        select(models.Outfit).order_by(func.random()).limit(n * 4)
+    ).all()
+    picked = recommender.mmr_rerank([(o, 1.0) for o in pool], k=n, lam=0.7)
+    return [o for o, _ in picked]
+
 
 @app.get("/outfits/{outfit_id}", response_model=schemas.OutfitOut)
 def get_outfit(outfit_id: uuid.UUID, db: Session = Depends(get_db)):

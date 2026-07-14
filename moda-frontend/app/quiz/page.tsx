@@ -7,9 +7,9 @@
 // optional free-text steps with suggestion chips.
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Logo } from "@/components/Logo";
-import { submitQuiz } from "@/lib/api";
+import { Outfit, getSampleOutfits, submitQuiz } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 type StepKey =
@@ -19,7 +19,8 @@ type StepKey =
   | "colors"
   | "occasions"
   | "brands"
-  | "inspirations";
+  | "inspirations"
+  | "calibration";
 
 type StepDef = {
   key: StepKey;
@@ -27,6 +28,7 @@ type StepDef = {
   options: string[];
   multi: boolean;
   freeText?: boolean; // options become suggestions; user can also type their own
+  images?: boolean; // options are outfit ids rendered as a photo grid
   hint?: string;
 };
 
@@ -38,6 +40,7 @@ const STEPS: StepDef[] = [
   { key: "occasions", question: "what are you dressing for?", options: ["everyday", "work", "formal", "nightlife", "casual", "travel"], multi: true },
   { key: "brands", question: "brands you love?", options: ["nike", "adidas", "uniqlo", "zara", "cos", "carhartt"], multi: true, freeText: true, hint: "optional — pick or type your own" },
   { key: "inspirations", question: "style inspirations?", options: ["90s hip hop", "parisian chic", "scandi minimalism", "y2k", "japanese streetwear"], multi: true, freeText: true, hint: "optional — an era, scene, or icon" },
+  { key: "calibration", question: "pick the looks you love", options: [], multi: true, images: true, hint: "tap any that speak to you — this teaches MODA your eye" },
 ];
 
 const EMPTY_PICKS: Record<StepKey, string[]> = {
@@ -48,6 +51,7 @@ const EMPTY_PICKS: Record<StepKey, string[]> = {
   occasions: [],
   brands: [],
   inspirations: [],
+  calibration: [],
 };
 
 export default function Quiz() {
@@ -58,8 +62,14 @@ export default function Quiz() {
   const [phase, setPhase] = useState<"quiz" | "summary">("quiz");
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
+  const [sample, setSample] = useState<Outfit[] | null>(null);
 
   const def = STEPS[step];
+
+  // Fetch the calibration grid once, as soon as the quiz starts
+  useEffect(() => {
+    getSampleOutfits(12).then(setSample);
+  }, []);
 
   function toggle(opt: string) {
     setPicks((p) => {
@@ -93,6 +103,7 @@ export default function Quiz() {
       occasions: picks.occasions.length ? picks.occasions : ["everyday"],
       brands: picks.brands,
       inspirations: picks.inspirations,
+      likedOutfitIds: picks.calibration,
       layering: picks.layering[0] === "yes",
     });
     setProfileText(profile);
@@ -107,6 +118,7 @@ export default function Quiz() {
     { label: "occasions", value: picks.occasions.join(", ") || "—", jump: 4 },
     { label: "brands", value: picks.brands.join(", ") || "—", jump: 5 },
     { label: "inspirations", value: picks.inspirations.join(", ") || "—", jump: 6 },
+    { label: "looks you loved", value: picks.calibration.length ? `${picks.calibration.length} picked` : "—", jump: 7 },
   ];
 
   // Free-text picks that aren't in the suggestion list still need a chip
@@ -128,23 +140,61 @@ export default function Quiz() {
             <h2 className="font-display text-[22px] italic">{def.question}</h2>
             {def.hint && <p className="mt-1 text-[11px] italic text-faint">{def.hint}</p>}
           </div>
-          <div className="flex max-w-md flex-wrap justify-center gap-3">
-            {visibleOptions.map((opt) => {
-              const active = picks[def.key].includes(opt);
-              return (
-                <button
-                  key={opt}
-                  onClick={() => toggle(opt)}
-                  aria-pressed={active}
-                  className={`rounded-lg border px-5 py-2 text-[15px] font-semibold transition-colors ${
-                    active ? "border-ink bg-mist" : "border-ink/60 bg-paper hover:bg-mist/60"
-                  }`}
-                >
-                  {opt}
-                </button>
-              );
-            })}
-          </div>
+          {def.images ? (
+            sample === null ? (
+              <div className="grid w-full max-w-md grid-cols-3 gap-2">
+                {Array.from({ length: 12 }).map((_, i) => (
+                  <div key={i} className="aspect-[3/4] animate-pulse bg-mist" />
+                ))}
+              </div>
+            ) : (
+              <div className="grid w-full max-w-md grid-cols-3 gap-2">
+                {sample.map((o) => {
+                  const active = picks.calibration.includes(o.id);
+                  return (
+                    <button
+                      key={o.id}
+                      onClick={() => toggle(o.id)}
+                      aria-pressed={active}
+                      className={`relative overflow-hidden border-2 transition-colors ${
+                        active ? "border-ink" : "border-transparent"
+                      }`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={o.image_url}
+                        alt={o.caption ?? "Outfit"}
+                        className="aspect-[3/4] w-full object-cover"
+                      />
+                      {active && (
+                        <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-[11px] text-paper">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            <div className="flex max-w-md flex-wrap justify-center gap-3">
+              {visibleOptions.map((opt) => {
+                const active = picks[def.key].includes(opt);
+                return (
+                  <button
+                    key={opt}
+                    onClick={() => toggle(opt)}
+                    aria-pressed={active}
+                    className={`rounded-lg border px-5 py-2 text-[15px] font-semibold transition-colors ${
+                      active ? "border-ink bg-mist" : "border-ink/60 bg-paper hover:bg-mist/60"
+                    }`}
+                  >
+                    {opt}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {def.freeText && (
             <div className="flex items-center gap-2">
               <input

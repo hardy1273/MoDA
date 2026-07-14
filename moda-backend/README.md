@@ -9,6 +9,10 @@ AI-powered fashion recommendation backend. "Spotify Discover Weekly, but for fas
 1. **Quiz → taste anchor.** Quiz answers become short CLIP-friendly phrases
    ("minimal style outfit", "oversized fit clothing"), each embedded with
    OpenCLIP's text encoder and averaged into a 512-dim `quiz_embedding`.
+   (Plain equal-weight phrases beat "a photo of …" templates and aesthetic
+   up-weighting in an A/B on this corpus.) Quiz-time "pick the looks you
+   love" calibration picks seed like interactions, anchoring taste in image
+   space from the first feed.
 2. **Outfits → image embeddings.** Each curated image is embedded with the
    same CLIP model's image encoder, so text taste and image outfits live in
    one shared vector space.
@@ -19,10 +23,15 @@ AI-powered fashion recommendation backend. "Spotify Discover Weekly, but for fas
    user = α·quiz + β·mean(liked ∪ saved) − γ·mean(disliked ∪ skipped)
    ```
 
-   (saves weighted 1.5× a like, skips 0.25× a dislike; result L2-normalized)
-4. **Retrieval.** pgvector cosine nearest-neighbor over outfit embeddings,
-   excluding everything already seen, over-fetching 3× then re-ranking with
-   MMR so the feed stays varied instead of 20 near-duplicates.
+   (saves weighted 1.5× a like, skips 0.25× a dislike; each interaction also
+   decays with a `FEEDBACK_HALF_LIFE_DAYS` half-life so recent taste counts
+   more; result L2-normalized)
+4. **Retrieval + hybrid scoring.** pgvector cosine nearest-neighbor over
+   outfit embeddings, excluding everything already seen, over-fetching 3×.
+   Each candidate gets a small tag-affinity bonus (`TAG_AFFINITY_BOOST` per
+   outfit tag matching the user's stated taste, max 2) — in testing this
+   roughly doubled on-aesthetic items in the top 10. Then MMR re-ranking so
+   the feed stays varied instead of 20 near-duplicates.
 5. **Explanations.** Tag overlap between the outfit and the user's liked
    tags/profile produces the "Recommended because…" line.
 
@@ -62,6 +71,7 @@ First quiz/ingest call downloads the CLIP weights (~600MB) once.
 | GET | `/recommendations?k=20` | Bearer | Personalized feed with scores + explanations |
 | POST | `/feedback` | Bearer | `{outfit_id, interaction_type: like\|dislike\|save\|skip}` |
 | GET | `/saved` | Bearer | Saved outfits |
+| GET | `/outfits/sample?n=12` | Bearer | Visually diverse sample (quiz calibration) |
 | GET | `/outfits/{id}` | — | Single outfit |
 | GET | `/health` | — | Liveness |
 

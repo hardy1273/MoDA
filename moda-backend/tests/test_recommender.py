@@ -73,6 +73,45 @@ class TestBuildProfileText:
 # Vector math
 # ---------------------------------------------------------------------------
 
+class TestDecayFactor:
+    def _now(self):
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc)
+
+    def test_fresh_interaction_full_weight(self):
+        now = self._now()
+        assert recommender.decay_factor(now, now, half_life_days=14) == pytest.approx(1.0)
+
+    def test_half_life_halves_weight(self):
+        from datetime import timedelta
+
+        now = self._now()
+        old = now - timedelta(days=14)
+        assert recommender.decay_factor(old, now, half_life_days=14) == pytest.approx(0.5)
+
+    def test_two_half_lives_quarter_weight(self):
+        from datetime import timedelta
+
+        now = self._now()
+        old = now - timedelta(days=28)
+        assert recommender.decay_factor(old, now, half_life_days=14) == pytest.approx(0.25)
+
+    def test_zero_half_life_disables_decay(self):
+        from datetime import timedelta
+
+        now = self._now()
+        old = now - timedelta(days=365)
+        assert recommender.decay_factor(old, now, half_life_days=0) == 1.0
+
+    def test_future_timestamp_clamped(self):
+        from datetime import timedelta
+
+        now = self._now()
+        future = now + timedelta(days=3)
+        assert recommender.decay_factor(future, now, half_life_days=14) == pytest.approx(1.0)
+
+
 class TestL2:
     def test_normalizes_to_unit_length(self):
         v = recommender._l2(np.array([3.0, 4.0], dtype=np.float32))
@@ -169,6 +208,43 @@ class TestMmrRerank:
     def test_returns_exactly_k_items(self):
         cands = [(_outfit(np.random.rand(4)), 1.0 - i * 0.01) for i in range(10)]
         assert len(recommender.mmr_rerank(cands, k=5, lam=0.3)) == 5
+
+
+# ---------------------------------------------------------------------------
+# Tag-affinity boost
+# ---------------------------------------------------------------------------
+
+class TestTagBoost:
+    def _outfit(self, style=(), color=(), occasion=()):
+        return SimpleNamespace(
+            style_tags=list(style), color_tags=list(color), occasion_tags=list(occasion)
+        )
+
+    def test_no_matching_tags_no_boost(self):
+        assert recommender.tag_boost(self._outfit(style=["vintage"]), {"minimal"}) == 0.0
+
+    def test_one_matching_tag(self):
+        boost = recommender.tag_boost(self._outfit(style=["minimal"]), {"minimal"})
+        assert boost == pytest.approx(recommender.settings.tag_affinity_boost)
+
+    def test_boost_capped_at_two_tags(self):
+        o = self._outfit(style=["minimal", "modern"], color=["black"], occasion=["everyday"])
+        taste = {"minimal", "modern", "black", "everyday"}
+        assert recommender.tag_boost(o, taste) == pytest.approx(
+            2 * recommender.settings.tag_affinity_boost
+        )
+
+    def test_multiword_tag_matches_tokenized_taste(self):
+        # profile_text is tokenized word-by-word, so "old money" arrives
+        # as {"old", "money"} — the tag should still match
+        o = self._outfit(style=["old money"])
+        assert recommender.tag_boost(o, {"old", "money"}) == pytest.approx(
+            recommender.settings.tag_affinity_boost
+        )
+
+    def test_match_is_case_insensitive(self):
+        o = self._outfit(style=["Minimal"])
+        assert recommender.tag_boost(o, {"minimal"}) > 0
 
 
 # ---------------------------------------------------------------------------

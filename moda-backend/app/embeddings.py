@@ -69,14 +69,20 @@ def embed_image(image: Image.Image) -> np.ndarray:
     return _normalize(feats.cpu().numpy().astype(np.float32))[0]
 
 
-def embed_profile_phrases(phrases: list[str]) -> np.ndarray:
-    """Embed several short taste phrases and average them.
+def embed_profile_phrases(phrases: list[str], weights: list[float] | None = None) -> np.ndarray:
+    """Embed several short taste phrases and (weighted-)average them.
 
     CLIP's text encoder is trained on short captions (77-token limit), so
     averaging multiple compact phrases is more faithful than embedding one
-    long paragraph.
+    long paragraph. Weights let high-signal phrases (aesthetics) count more
+    than generic ones (colors, occasions).
     """
     if not phrases:
         raise ValueError("No phrases to embed")
     vecs = embed_texts(phrases)
+    if weights is not None:
+        if len(weights) != len(phrases):
+            raise ValueError("weights must match phrases")
+        w = np.asarray(weights, dtype=np.float32)[:, None]
+        return _normalize((vecs * w).sum(axis=0) / w.sum())
     return _normalize(vecs.mean(axis=0))

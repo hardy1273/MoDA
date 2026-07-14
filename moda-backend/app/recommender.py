@@ -17,6 +17,7 @@ Core ideas
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import numpy as np
 from sqlalchemy import select
@@ -39,7 +40,13 @@ NEGATIVE_WEIGHTS = {"dislike": 1.0, "skip": 0.25}
 # ---------------------------------------------------------------------------
 
 def build_profile_phrases(quiz: QuizSubmission) -> list[str]:
-    """Turn quiz answers into short CLIP-friendly phrases."""
+    """Turn quiz answers into short CLIP-friendly phrases.
+
+    Kept deliberately plain: outfit embeddings blend 30% Unsplash-style
+    captions, and an A/B against "a photo of …" prompt templates and
+    aesthetic up-weighting showed plain equal-weight phrases retrieve more
+    on-aesthetic outfits on this corpus.
+    """
     phrases: list[str] = []
     for a in quiz.aesthetics:
         phrases.append(f"{a} style outfit")
@@ -83,11 +90,26 @@ def _l2(v: np.ndarray) -> np.ndarray:
     return v / n if n > 0 else v
 
 
+def decay_factor(created_at: datetime, now: datetime, half_life_days: float) -> float:
+    """Exponential recency decay: an interaction half_life_days old counts 0.5x.
+
+    half_life_days <= 0 disables decay (all interactions weigh equally).
+    """
+    if half_life_days <= 0:
+        return 1.0
+    age_days = max((now - created_at).total_seconds() / 86400.0, 0.0)
+    return float(0.5 ** (age_days / half_life_days))
+
+
 def _weighted_mean(
     db: Session, user_id: uuid.UUID, weights: dict[str, float]
 ) -> np.ndarray | None:
     rows = db.execute(
-        select(models.Outfit.embedding, models.Interaction.interaction_type)
+        select(
+            models.Outfit.embedding,
+            models.Interaction.interaction_type,
+            models.Interaction.created_at,
+        )
         .join(models.Interaction, models.Interaction.outfit_id == models.Outfit.id)
         .where(
             models.Interaction.user_id == user_id,
@@ -96,8 +118,13 @@ def _weighted_mean(
     ).all()
     if not rows:
         return None
-    vecs = np.array([np.asarray(emb, dtype=np.float32) for emb, _ in rows])
-    w = np.array([weights[t] for _, t in rows], dtype=np.float32)[:, None]
+    now = datetime.now(timezone.utc)
+    half_life = settings.feedback_half_life_days
+    vecs = np.array([np.asarray(emb, dtype=np.float32) for emb, _, _ in rows])
+    w = np.array(
+        [weights[t] * decay_factor(ts, now, half_life) for _, t, ts in rows],
+        dtype=np.float32,
+    )[:, None]
     return (vecs * w).sum(axis=0) / w.sum()
 
 
@@ -226,6 +253,34 @@ def _user_taste_tags(db: Session, user: models.User) -> set[str]:
     return tags
 
 
+def _matched_tags(outfit: models.Outfit, taste_tags: set[str]) -> list[str]:
+    """Outfit tags present in the user's taste vocabulary.
+
+    Multi-word tags ("old money") match if every word appears — profile_text
+    is tokenized word-by-word so the joined form is never in the set.
+    """
+    tags = (
+        (outfit.style_tags or []) + (outfit.color_tags or []) + (outfit.occasion_tags or [])
+    )
+    out = []
+    for t in tags:
+        tl = t.lower()
+        if tl in taste_tags or (" " in tl and all(w in taste_tags for w in tl.split())):
+            out.append(t)
+    return out
+
+
+def tag_boost(outfit: models.Outfit, taste_tags: set[str]) -> float:
+    """Small additive score bonus for matching the user's stated taste.
+
+    CLIP cosine deltas across the catalog are ~0.05, so even two matched
+    tags meaningfully lift on-aesthetic outfits without drowning the
+    visual signal.
+    """
+    per_tag = settings.tag_affinity_boost
+    return per_tag * min(len(_matched_tags(outfit, taste_tags)), 2)
+
+
 def explain(outfit: models.Outfit, taste_tags: set[str]) -> str:
     outfit_tags = [
         t for t in (outfit.style_tags or []) + (outfit.color_tags or []) if t
@@ -250,11 +305,18 @@ def recommend(db: Session, user: models.User, k: int) -> list[dict]:
 
     user_vec = np.asarray(user.embedding, dtype=np.float32)
     seen = _seen_outfit_ids(db, user.id)
+    taste_tags = _user_taste_tags(db, user)
+
     # Over-fetch so MMR has room to diversify
     candidates = retrieve_candidates(db, user_vec, seen, pool_size=max(k * 3, 30))
+    # Hybrid score: visual similarity + stated-taste tag affinity
+    candidates = sorted(
+        ((o, s + tag_boost(o, taste_tags)) for o, s in candidates),
+        key=lambda c: c[1],
+        reverse=True,
+    )
     ranked = mmr_rerank(candidates, k=k, lam=settings.diversity_lambda)
 
-    taste_tags = _user_taste_tags(db, user)
     return [
         {"outfit": outfit, "score": round(score, 4), "explanation": explain(outfit, taste_tags)}
         for outfit, score in ranked
