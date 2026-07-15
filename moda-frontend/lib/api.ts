@@ -11,7 +11,18 @@ export type Outfit = {
   style_tags: string[];
   color_tags: string[];
   occasion_tags: string[];
-  price?: number; // commerce stub — not in backend yet
+  price?: number; // legacy demo-catalog field; real prices live on items
+};
+
+export type Item = {
+  id: string;
+  name: string;
+  category: string;
+  image_url: string;
+  caption: string | null;
+  style_tags: string[];
+  color_tags: string[];
+  price: number; // dollars (placeholder MVP pricing until sellers set real ones)
 };
 
 export type FeedItem = { outfit: Outfit; score: number; explanation: string };
@@ -166,6 +177,28 @@ export async function getSampleOutfits(n = 12): Promise<Outfit[]> {
     return await http<Outfit[]>(`/outfits/sample?n=${n}`);
   } catch {
     return DEMO_OUTFITS.slice(0, n);
+  }
+}
+
+export async function getOutfitItems(outfitId: string): Promise<Item[]> {
+  if (outfitId.startsWith("demo-")) return [];
+  try {
+    return await http<Item[]>(`/outfits/${outfitId}/items`);
+  } catch {
+    return [];
+  }
+}
+
+/** Personalized item feed; falls back to the unpersonalized catalog, then []. */
+export async function getItems(k = 24): Promise<Item[]> {
+  try {
+    return await http<Item[]>(`/items/recommended?k=${k}`);
+  } catch {
+    try {
+      return await http<Item[]>(`/items?k=${k}`);
+    } catch {
+      return [];
+    }
   }
 }
 

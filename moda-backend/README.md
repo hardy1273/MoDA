@@ -73,7 +73,17 @@ First quiz/ingest call downloads the CLIP weights (~600MB) once.
 | GET | `/saved` | Bearer | Saved outfits |
 | GET | `/outfits/sample?n=12` | Bearer | Visually diverse sample (quiz calibration) |
 | GET | `/outfits/{id}` | — | Single outfit |
+| GET | `/outfits/{id}/items` | — | Shop the look: similar purchasable pieces |
+| GET | `/items` | — | Browse item catalog (`?category=`, `?k=`) |
+| GET | `/items/recommended?k=` | Bearer | Pieces ranked by the user's taste vector |
+| GET | `/items/{id}` | — | Single item |
 | GET | `/health` | — | Liveness |
+
+Items are individual pieces (hoodie, sneakers, …) with their own CLIP
+embeddings and placeholder prices (deterministic per item within a realistic
+category range — replaced when seller pricing lands). Pipeline:
+`scripts/fetch_items.py` → `scripts/ingest_items.py` → `scripts/link_items.py`
+(links each outfit to its closest items, one per category).
 
 Protected routes take `Authorization: Bearer <token>`; tokens are HS256 JWTs
 signed with `JWT_SECRET` (set a real value outside local dev).

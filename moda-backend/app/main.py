@@ -184,3 +184,55 @@ def get_outfit(outfit_id: uuid.UUID, db: Session = Depends(get_db)):
     if not outfit:
         raise HTTPException(404, "Outfit not found")
     return outfit
+
+
+@app.get("/outfits/{outfit_id}/items", response_model=list[schemas.ItemOut])
+def get_outfit_items(outfit_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Shop the look: visually similar purchasable pieces for an outfit."""
+    if not db.get(models.Outfit, outfit_id):
+        raise HTTPException(404, "Outfit not found")
+    rows = db.scalars(
+        select(models.Item)
+        .join(models.OutfitItem, models.OutfitItem.item_id == models.Item.id)
+        .where(models.OutfitItem.outfit_id == outfit_id)
+        .order_by(models.OutfitItem.rank)
+    ).all()
+    return rows
+
+
+# ---------- Items ----------
+
+@app.get("/items/recommended", response_model=list[schemas.ItemOut])
+def recommended_items(
+    k: int = 24,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Pieces ranked by the user's taste vector."""
+    if user.embedding is None:
+        raise HTTPException(400, "User has no embedding yet; submit the style quiz first.")
+    k = min(max(k, 1), 100)
+    dist = models.Item.embedding.cosine_distance(list(user.embedding))
+    return db.scalars(select(models.Item).order_by(dist).limit(k)).all()
+
+
+@app.get("/items", response_model=list[schemas.ItemOut])
+def list_items(
+    k: int = 24,
+    category: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Browse the item catalog (unpersonalized)."""
+    k = min(max(k, 1), 100)
+    stmt = select(models.Item)
+    if category:
+        stmt = stmt.where(models.Item.category == category)
+    return db.scalars(stmt.order_by(func.random()).limit(k)).all()
+
+
+@app.get("/items/{item_id}", response_model=schemas.ItemOut)
+def get_item(item_id: uuid.UUID, db: Session = Depends(get_db)):
+    item = db.get(models.Item, item_id)
+    if not item:
+        raise HTTPException(404, "Item not found")
+    return item

@@ -4,21 +4,22 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BottomNav } from "@/components/BottomNav";
+import { ItemCard } from "@/components/ItemCard";
 import { TopBar } from "@/components/TopBar";
-import { Outfit, getOutfit } from "@/lib/api";
+import { Item, Outfit, getOutfit, getOutfitItems } from "@/lib/api";
 import { useStore } from "@/lib/store";
-
-const SIZES = ["XS", "S", "M", "L", "XL"];
 
 export default function OutfitDetail() {
   const params = useParams<{ id: string }>();
-  const { session, liked, saved, toggleLike, toggleSave, addToCart } = useStore();
+  const { session, liked, saved, toggleLike, toggleSave } = useStore();
   const [outfit, setOutfit] = useState<Outfit | null | undefined>(undefined);
-  const [size, setSize] = useState("S");
-  const [added, setAdded] = useState(false);
+  const [items, setItems] = useState<Item[] | null>(null);
 
   useEffect(() => {
-    if (params?.id) getOutfit(params.id).then(setOutfit);
+    if (params?.id) {
+      getOutfit(params.id).then(setOutfit);
+      getOutfitItems(params.id).then(setItems);
+    }
   }, [params?.id]);
 
   if (outfit === undefined) {
@@ -46,7 +47,7 @@ export default function OutfitDetail() {
 
   const isLiked = !!liked[outfit.id];
   const isSaved = !!saved[outfit.id];
-  const price = outfit.price ?? 30;
+  const lookTotal = items?.reduce((n, it) => n + it.price, 0) ?? 0;
   const theme = outfit.style_tags[0] ?? "minimal";
   const profileHint = session?.profileText
     ? session.profileText.replace(/^A taste profile centered on /i, "").replace(/\.$/, "")
@@ -66,33 +67,7 @@ export default function OutfitDetail() {
           <img src={outfit.image_url} alt={outfit.caption ?? "Outfit"} className="aspect-[3/4] w-full object-cover" />
         </div>
 
-        <div className="mt-5 flex items-center gap-3 text-[13px]">
-          <span>Sizes:</span>
-          {SIZES.map((s) => (
-            <button
-              key={s}
-              onClick={() => setSize(s)}
-              aria-pressed={size === s}
-              className={`border px-2 py-0.5 ${size === s ? "border-signal text-signal" : "border-ink/50"}`}
-            >
-              {s}
-            </button>
-          ))}
-          <span className="ml-auto underline">size guide</span>
-        </div>
-
         <div className="mt-4 flex items-center gap-4">
-          <button
-            onClick={() => {
-              addToCart(outfit, size);
-              setAdded(true);
-              setTimeout(() => setAdded(false), 1600);
-            }}
-            className="bg-ink px-5 py-2 text-[13px] text-paper hover:bg-ink/85"
-          >
-            {added ? "Added ✓" : "Add to cart"}
-          </button>
-          <span className="text-[17px]">${price}</span>
           <div className="ml-auto flex items-center gap-3">
             <button
               aria-label={isLiked ? "Unlike" : "Like"}
@@ -114,6 +89,32 @@ export default function OutfitDetail() {
             </button>
           </div>
         </div>
+
+        <section className="mt-6">
+          <h2 className="text-center font-display text-[18px] font-semibold italic">Shop this look</h2>
+          {items === null ? (
+            <div className="mt-3 grid grid-cols-2 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="aspect-square animate-pulse bg-mist" />
+              ))}
+            </div>
+          ) : items.length === 0 ? (
+            <p className="mt-2 text-center text-[12px] italic text-faint">
+              No matching pieces yet — check back soon.
+            </p>
+          ) : (
+            <>
+              <p className="mt-1 text-center text-[11px] italic text-faint">
+                similar pieces, matched to this look · get it all for ${lookTotal.toFixed(2)}
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-4">
+                {items.map((it) => (
+                  <ItemCard key={it.id} item={it} />
+                ))}
+              </div>
+            </>
+          )}
+        </section>
 
         <section className="mt-7 text-center">
           <h2 className="font-display text-[18px] font-semibold italic">Why this design?</h2>

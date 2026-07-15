@@ -2,7 +2,16 @@ import uuid
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -66,6 +75,69 @@ class Outfit(Base):
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+    )
+
+
+class Item(Base):
+    """An individual purchasable piece (hoodie, sneakers, …).
+
+    Prices are placeholder MVP values (deterministic per item within a
+    realistic category range) until sellers set real ones.
+    """
+
+    __tablename__ = "items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    image_url: Mapped[str] = mapped_column(Text)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    style_tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    color_tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+
+    price_cents: Mapped[int] = mapped_column(Integer)
+    embedding: Mapped[list[float]] = mapped_column(Vector(DIM))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    @property
+    def price(self) -> float:
+        return self.price_cents / 100
+
+    __table_args__ = (
+        Index(
+            "ix_items_embedding_cosine",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+
+class OutfitItem(Base):
+    """Shop-the-look link: visually similar items for an outfit."""
+
+    __tablename__ = "outfit_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    outfit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("outfits.id"), index=True
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("items.id"), index=True
+    )
+    rank: Mapped[int] = mapped_column(Integer)
+    # cosine similarity between outfit and item embeddings at link time
+    score: Mapped[float] = mapped_column(Float)
+
+    item: Mapped["Item"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("outfit_id", "item_id", name="uq_outfit_item"),
     )
 
 

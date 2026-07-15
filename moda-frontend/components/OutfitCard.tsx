@@ -5,11 +5,10 @@ import { FeedItem } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 export function OutfitCard({ item, index }: { item: FeedItem; index: number }) {
-  const { liked, saved, toggleLike, toggleSave, addToCart } = useStore();
+  const { liked, saved, toggleLike, toggleSave } = useStore();
   const o = item.outfit;
   const isLiked = !!liked[o.id];
   const isSaved = !!saved[o.id];
-  const price = o.price ?? 30;
 
   return (
     <article className="flex flex-col">
@@ -28,7 +27,6 @@ export function OutfitCard({ item, index }: { item: FeedItem; index: number }) {
           <Link href={`/outfit/${o.id}`} className="block truncate text-[13px] font-medium">
             {o.style_tags[0] ? `${o.style_tags[0]} look` : "Look"} #{index + 1}
           </Link>
-          <span className="text-[13px] text-faint">${price}</span>
         </div>
         <div className="flex items-center gap-2 pt-0.5">
           <button
@@ -54,12 +52,12 @@ export function OutfitCard({ item, index }: { item: FeedItem; index: number }) {
         </div>
       </div>
 
-      <button
-        onClick={() => addToCart(o, "M")}
+      <Link
+        href={`/outfit/${o.id}`}
         className="mt-1.5 self-start border border-ink px-2.5 py-1 text-[11px] tracking-micro uppercase hover:bg-ink hover:text-paper"
       >
-        Add to cart
-      </button>
+        Shop the look
+      </Link>
     </article>
   );
 }

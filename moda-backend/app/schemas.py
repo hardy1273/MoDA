@@ -75,6 +75,21 @@ class FeedOut(BaseModel):
     items: list[RecommendationOut]
 
 
+# ---------- Items ----------
+
+class ItemOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    category: str
+    image_url: str
+    caption: str | None
+    style_tags: list[str]
+    color_tags: list[str]
+    price: float  # dollars (placeholder MVP pricing)
+
+    model_config = {"from_attributes": True}
+
+
 # ---------- Feedback ----------
 
 class FeedbackIn(BaseModel):

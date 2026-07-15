@@ -9,7 +9,7 @@ import { useStore } from "@/lib/store";
 
 export default function Cart() {
   const { cart, removeFromCart } = useStore();
-  const total = cart.reduce((n, x) => n + (x.outfit.price ?? 30) * x.qty, 0);
+  const total = cart.reduce((n, x) => n + x.item.price * x.qty, 0);
 
   return (
     <>
@@ -26,26 +26,27 @@ export default function Cart() {
           <>
             <ul className="mt-6 divide-y divide-line">
               {cart.map((x) => (
-                <li key={`${x.outfit.id}-${x.size}`} className="flex items-center gap-4 py-4">
+                <li key={`${x.item.id}-${x.size}`} className="flex items-center gap-4 py-4">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={x.outfit.image_url} alt="" className="h-20 w-16 object-cover bg-mist" />
+                  <img src={x.item.image_url} alt="" className="h-20 w-16 object-cover bg-mist" />
                   <div className="min-w-0 flex-1 text-[13px]">
-                    <p className="truncate font-medium">{x.outfit.style_tags[0] ?? "Look"}</p>
+                    <p className="truncate font-medium">{x.item.name}</p>
+                    <p className="text-[11px] uppercase tracking-micro text-faint">{x.item.category}</p>
                     <p className="text-faint">Size {x.size} · Qty {x.qty}</p>
                     <button
-                      onClick={() => removeFromCart(x.outfit.id, x.size)}
+                      onClick={() => removeFromCart(x.item.id, x.size)}
                       className="mt-1 text-faint underline"
                     >
                       Remove
                     </button>
                   </div>
-                  <span className="text-[14px]">${(x.outfit.price ?? 30) * x.qty}</span>
+                  <span className="text-[14px]">${(x.item.price * x.qty).toFixed(2)}</span>
                 </li>
               ))}
             </ul>
             <div className="mt-4 flex items-center justify-between border-t border-ink pt-4">
               <span className="text-[14px] font-semibold">Total</span>
-              <span className="text-[16px]">${total}</span>
+              <span className="text-[16px]">${total.toFixed(2)}</span>
             </div>
             <button
               disabled

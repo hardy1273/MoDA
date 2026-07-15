@@ -5,7 +5,7 @@
 // feedback calls to the backend so the taste vector actually moves.
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Outfit, sendFeedback } from "./api";
+import { Item, Outfit, sendFeedback } from "./api";
 
 type Session = {
   userId: string;
@@ -13,7 +13,7 @@ type Session = {
   profileText: string | null;
   token: string | null; // null = demo mode (backend unreachable at signup)
 };
-type CartItem = { outfit: Outfit; size: string; qty: number };
+type CartItem = { item: Item; size: string; qty: number };
 
 type Store = {
   session: Session | null;
@@ -21,8 +21,8 @@ type Store = {
   setProfileText: (t: string) => void;
 
   cart: CartItem[];
-  addToCart: (outfit: Outfit, size: string) => void;
-  removeFromCart: (outfitId: string, size: string) => void;
+  addToCart: (item: Item, size: string) => void;
+  removeFromCart: (itemId: string, size: string) => void;
   cartCount: number;
 
   liked: Record<string, Outfit>;
@@ -53,7 +53,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setSession(load("moda.session", null));
-    setCart(load("moda.cart", []));
+    // Drop cart entries from the pre-items era (they held outfits, not items)
+    setCart(load<CartItem[]>("moda.cart", []).filter((x) => x?.item?.id));
     setLiked(load("moda.liked", {}));
     setSaved(load("moda.saved", {}));
     setHydrated(true);
@@ -75,18 +76,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setProfileText: (t) => setSession((s) => (s ? { ...s, profileText: t } : s)),
 
       cart,
-      addToCart: (outfit, size) =>
+      addToCart: (item, size) =>
         setCart((c) => {
-          const i = c.findIndex((x) => x.outfit.id === outfit.id && x.size === size);
+          const i = c.findIndex((x) => x.item.id === item.id && x.size === size);
           if (i >= 0) {
             const next = [...c];
             next[i] = { ...next[i], qty: next[i].qty + 1 };
             return next;
           }
-          return [...c, { outfit, size, qty: 1 }];
+          return [...c, { item, size, qty: 1 }];
         }),
-      removeFromCart: (outfitId, size) =>
-        setCart((c) => c.filter((x) => !(x.outfit.id === outfitId && x.size === size))),
+      removeFromCart: (itemId, size) =>
+        setCart((c) => c.filter((x) => !(x.item.id === itemId && x.size === size))),
       cartCount: cart.reduce((n, x) => n + x.qty, 0),
 
       liked,
