@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "moda-db",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "-f", "moda-backend/docker-compose.yml", "up"],
+      "port": 5432
+    },
+    {
+      "name": "moda-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd moda-backend && .venv/bin/uvicorn app.main:app --port 8000"],
+      "port": 8000
+    },
+    {
+      "name": "moda-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "moda-frontend"],
+      "port": 3000
+    }
+  ]
+}
