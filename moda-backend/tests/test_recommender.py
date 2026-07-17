@@ -211,6 +211,24 @@ class TestMmrRerank:
 
 
 # ---------------------------------------------------------------------------
+# Impression fatigue
+# ---------------------------------------------------------------------------
+
+class TestImpressionPenalty:
+    def test_unseen_outfit_no_penalty(self):
+        assert recommender.impression_penalty(0, per_view=0.02) == 0.0
+
+    def test_linear_in_views(self):
+        assert recommender.impression_penalty(3, per_view=0.02) == pytest.approx(0.06)
+
+    def test_capped_at_five_views(self):
+        assert recommender.impression_penalty(50, per_view=0.02) == pytest.approx(0.10)
+
+    def test_negative_count_clamped(self):
+        assert recommender.impression_penalty(-2, per_view=0.02) == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Tag-affinity boost
 # ---------------------------------------------------------------------------
 

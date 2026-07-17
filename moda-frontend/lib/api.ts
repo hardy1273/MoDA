@@ -226,6 +226,20 @@ export async function sendFeedback(
   }
 }
 
+/** Fire-and-forget: tell the backend these outfits were rendered. */
+export async function sendImpressions(outfitIds: string[]): Promise<void> {
+  const ids = outfitIds.filter((id) => !id.startsWith("demo-"));
+  if (ids.length === 0) return;
+  try {
+    await http("/impressions", {
+      method: "POST",
+      body: JSON.stringify({ outfit_ids: ids }),
+    });
+  } catch {
+    /* offline or logged out — fatigue signal is best-effort */
+  }
+}
+
 export async function getSaved(): Promise<Outfit[] | null> {
   try {
     return await http<Outfit[]>("/saved");

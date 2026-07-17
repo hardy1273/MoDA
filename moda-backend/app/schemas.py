@@ -138,6 +138,12 @@ class OrderOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ---------- Impressions ----------
+
+class ImpressionsIn(BaseModel):
+    outfit_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
 # ---------- Feedback ----------
 
 class FeedbackIn(BaseModel):

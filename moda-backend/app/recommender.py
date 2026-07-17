@@ -189,6 +189,20 @@ def _seen_outfit_ids(db: Session, user_id: uuid.UUID) -> list[uuid.UUID]:
     )
 
 
+def _impression_counts(db: Session, user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    rows = db.execute(
+        select(models.Impression.outfit_id, models.Impression.count).where(
+            models.Impression.user_id == user_id
+        )
+    ).all()
+    return {outfit_id: count for outfit_id, count in rows}
+
+
+def impression_penalty(count: int, per_view: float, cap: int = 5) -> float:
+    """Fatigue penalty for an outfit already shown `count` times."""
+    return per_view * min(max(count, 0), cap)
+
+
 def retrieve_candidates(
     db: Session, user_vec: np.ndarray, exclude: list[uuid.UUID], pool_size: int
 ) -> list[tuple[models.Outfit, float]]:
@@ -306,12 +320,21 @@ def recommend(db: Session, user: models.User, k: int) -> list[dict]:
     user_vec = np.asarray(user.embedding, dtype=np.float32)
     seen = _seen_outfit_ids(db, user.id)
     taste_tags = _user_taste_tags(db, user)
+    views = _impression_counts(db, user.id)
 
-    # Over-fetch so MMR has room to diversify
-    candidates = retrieve_candidates(db, user_vec, seen, pool_size=max(k * 3, 30))
-    # Hybrid score: visual similarity + stated-taste tag affinity
+    # Over-fetch so MMR, tag boosts, and fatigue penalties have room to work
+    candidates = retrieve_candidates(db, user_vec, seen, pool_size=max(k * 5, 50))
+    # Hybrid score: visual similarity + stated-taste tag affinity - feed fatigue
     candidates = sorted(
-        ((o, s + tag_boost(o, taste_tags)) for o, s in candidates),
+        (
+            (
+                o,
+                s
+                + tag_boost(o, taste_tags)
+                - impression_penalty(views.get(o.id, 0), settings.impression_penalty),
+            )
+            for o, s in candidates
+        ),
         key=lambda c: c[1],
         reverse=True,
     )

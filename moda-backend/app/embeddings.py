@@ -35,9 +35,14 @@ def _load():
         import torch
 
         settings = get_settings()
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            settings.clip_model, pretrained=settings.clip_pretrained
-        )
+        # "hf-hub:org/repo" names (e.g. Marqo/marqo-fashionCLIP) carry their
+        # own weights — open_clip rejects a pretrained tag alongside them.
+        if settings.clip_model.startswith("hf-hub:"):
+            model, _, preprocess = open_clip.create_model_and_transforms(settings.clip_model)
+        else:
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                settings.clip_model, pretrained=settings.clip_pretrained
+            )
         model.eval()
         _torch = torch
         _model = model

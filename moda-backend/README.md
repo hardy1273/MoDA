@@ -2,7 +2,7 @@
 
 AI-powered fashion recommendation backend. "Spotify Discover Weekly, but for fashion."
 
-**Stack:** FastAPI · PostgreSQL + pgvector · OpenCLIP (ViT-B/32) · SQLAlchemy 2.0
+**Stack:** FastAPI · PostgreSQL + pgvector · Marqo-FashionCLIP (OpenCLIP) · SQLAlchemy 2.0
 
 ## How it works
 
@@ -27,11 +27,13 @@ AI-powered fashion recommendation backend. "Spotify Discover Weekly, but for fas
    decays with a `FEEDBACK_HALF_LIFE_DAYS` half-life so recent taste counts
    more; result L2-normalized)
 4. **Retrieval + hybrid scoring.** pgvector cosine nearest-neighbor over
-   outfit embeddings, excluding everything already seen, over-fetching 3×.
+   outfit embeddings, excluding everything already seen, over-fetching 5×.
    Each candidate gets a small tag-affinity bonus (`TAG_AFFINITY_BOOST` per
    outfit tag matching the user's stated taste, max 2) — in testing this
-   roughly doubled on-aesthetic items in the top 10. Then MMR re-ranking so
-   the feed stays varied instead of 20 near-duplicates.
+   roughly doubled on-aesthetic items in the top 10 — and a fatigue penalty
+   (`IMPRESSION_PENALTY` per prior view, capped at 5; the feed posts
+   impressions on render). Then MMR re-ranking so the feed stays varied
+   instead of 20 near-duplicates.
 5. **Explanations.** Tag overlap between the outfit and the user's liked
    tags/profile produces the "Recommended because…" line.
 
@@ -146,6 +148,10 @@ All knobs live in `.env`:
 pip install -r requirements-dev.txt
 
 pytest                      # unit tests (no DB / CLIP needed)
+
+# Offline recommender evaluation (needs the DB + ingested outfits).
+# Run before and after any recommender change and compare the table:
+python -m scripts.eval
 
 # Schema is managed by Alembic. init_db() (called on API startup and by
 # scripts) auto-upgrades to head; pre-Alembic databases are adopted by

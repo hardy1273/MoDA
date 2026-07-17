@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     feedback_half_life_days: float = 14.0
     # Additive score bonus per outfit tag matching the user's taste (max 2 tags)
     tag_affinity_boost: float = 0.05
+    # Score penalty per prior impression (capped at 5 views) — feed fatigue
+    impression_penalty: float = 0.02
 
     # Auth — override jwt_secret in .env for anything beyond local dev
     jwt_secret: str = "dev-only-jwt-secret-change-me-for-production-use"

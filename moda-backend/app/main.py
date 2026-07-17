@@ -138,6 +138,44 @@ def submit_feedback(
     return {"ok": True, "interaction_type": payload.interaction_type, "user_embedding_updated": updated}
 
 
+# ---------- Impressions ----------
+
+@app.post("/impressions", status_code=204)
+def record_impressions(
+    payload: schemas.ImpressionsIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Batch-record that outfits were shown (fired by the feed on render)."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.models import utcnow
+
+    # Only known outfits: a stale/bogus id must not 500 the whole batch
+    valid_ids = set(
+        db.scalars(
+            select(models.Outfit.id).where(models.Outfit.id.in_(set(payload.outfit_ids)))
+        ).all()
+    )
+    if not valid_ids:
+        return
+
+    now = utcnow()
+    stmt = pg_insert(models.Impression).values(
+        [
+            # id set explicitly: bulk INSERT bypasses the ORM-side uuid default
+            {"id": uuid.uuid4(), "user_id": user.id, "outfit_id": oid, "count": 1, "last_seen_at": now}
+            for oid in valid_ids
+        ]
+    )
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_impression",
+        set_={"count": models.Impression.count + 1, "last_seen_at": now},
+    )
+    db.execute(stmt)
+    db.commit()
+
+
 # ---------- Saved outfits ----------
 
 @app.get("/saved", response_model=list[schemas.OutfitOut])

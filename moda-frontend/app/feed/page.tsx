@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BottomNav } from "@/components/BottomNav";
 import { OutfitCard } from "@/components/OutfitCard";
 import { TopBar } from "@/components/TopBar";
-import { FeedItem, getFeed } from "@/lib/api";
+import { FeedItem, getFeed, sendImpressions } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 const THEMES = ["all", "vintage", "modern", "minimal", "streetwear", "urban"];
@@ -21,6 +21,7 @@ export default function Feed() {
       if (cancelled) return;
       setItems(r.items);
       setLive(r.live);
+      if (r.live) void sendImpressions(r.items.map((it) => it.outfit.id));
     });
     return () => {
       cancelled = true;
