@@ -141,6 +141,78 @@ class OutfitItem(Base):
     )
 
 
+class CartItem(Base):
+    """Server-side cart line for a logged-in user."""
+
+    __tablename__ = "cart_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), index=True
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    size: Mapped[str] = mapped_column(String(16))
+    qty: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    item: Mapped["Item"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "item_id", "size", name="uq_cart_line"),
+    )
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="paid")
+    total_cents: Mapped[int] = mapped_column(Integer)
+    payment_provider: Mapped[str] = mapped_column(String(24))
+    payment_ref: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    items: Mapped[list["OrderItem"]] = relationship(
+        back_populates="order", order_by="OrderItem.name"
+    )
+
+    @property
+    def total(self) -> float:
+        return self.total_cents / 100
+
+
+class OrderItem(Base):
+    """Order line with name/price snapshotted at purchase time."""
+
+    __tablename__ = "order_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orders.id"), index=True
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
+    name: Mapped[str] = mapped_column(String(120))
+    image_url: Mapped[str] = mapped_column(Text)
+    price_cents: Mapped[int] = mapped_column(Integer)
+    size: Mapped[str] = mapped_column(String(16))
+    qty: Mapped[int] = mapped_column(Integer)
+
+    order: Mapped["Order"] = relationship(back_populates="items")
+
+    @property
+    def price(self) -> float:
+        return self.price_cents / 100
+
+
 class Interaction(Base):
     __tablename__ = "interactions"
 

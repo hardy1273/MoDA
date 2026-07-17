@@ -233,3 +233,81 @@ export async function getSaved(): Promise<Outfit[] | null> {
     return null; // caller falls back to locally-saved demo items
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cart & orders (server-side for logged-in users; store falls back to local)
+// ---------------------------------------------------------------------------
+
+export type CartLine = { id: string; item: Item; size: string; qty: number };
+export type CartData = { items: CartLine[]; total: number };
+
+export type OrderLine = {
+  name: string;
+  image_url: string;
+  price: number;
+  size: string;
+  qty: number;
+};
+
+export type Order = {
+  id: string;
+  status: string;
+  total: number;
+  payment_provider: string;
+  payment_ref: string;
+  created_at: string;
+  items: OrderLine[];
+};
+
+/** All cart calls return null when offline or logged out — the store then
+ *  keeps its localStorage-only behavior. */
+export async function getCart(): Promise<CartData | null> {
+  try {
+    return await http<CartData>("/cart");
+  } catch {
+    return null;
+  }
+}
+
+export async function addCartLine(itemId: string, size: string, qty = 1): Promise<CartData | null> {
+  try {
+    return await http<CartData>("/cart/items", {
+      method: "POST",
+      body: JSON.stringify({ item_id: itemId, size, qty }),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function updateCartLine(lineId: string, qty: number): Promise<CartData | null> {
+  try {
+    return await http<CartData>(`/cart/items/${lineId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ qty }),
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function removeCartLine(lineId: string): Promise<CartData | null> {
+  try {
+    return await http<CartData>(`/cart/items/${lineId}`, { method: "DELETE" });
+  } catch {
+    return null;
+  }
+}
+
+/** Throws on failure so the cart page can show what went wrong. */
+export async function checkout(): Promise<Order> {
+  return http<Order>("/checkout", { method: "POST" });
+}
+
+export async function getOrders(): Promise<Order[] | null> {
+  try {
+    return await http<Order[]>("/orders");
+  } catch {
+    return null;
+  }
+}

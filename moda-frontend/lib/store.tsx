@@ -5,7 +5,16 @@
 // feedback calls to the backend so the taste vector actually moves.
 
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Item, Outfit, sendFeedback } from "./api";
+import {
+  CartData,
+  Item,
+  Outfit,
+  addCartLine,
+  getCart,
+  removeCartLine,
+  sendFeedback,
+  updateCartLine,
+} from "./api";
 
 type Session = {
   userId: string;
@@ -13,7 +22,8 @@ type Session = {
   profileText: string | null;
   token: string | null; // null = demo mode (backend unreachable at signup)
 };
-type CartItem = { item: Item; size: string; qty: number };
+// serverId is set when the line is mirrored in the backend cart
+type CartItem = { item: Item; size: string; qty: number; serverId?: string };
 
 type Store = {
   session: Session | null;
@@ -23,6 +33,8 @@ type Store = {
   cart: CartItem[];
   addToCart: (item: Item, size: string) => void;
   removeFromCart: (itemId: string, size: string) => void;
+  setCartQty: (itemId: string, size: string, qty: number) => void;
+  clearCart: () => void;
   cartCount: number;
 
   liked: Record<string, Outfit>;
@@ -44,6 +56,10 @@ function load<T>(key: string, fallback: T): T {
   }
 }
 
+function fromServer(c: CartData): CartItem[] {
+  return c.items.map((l) => ({ item: l.item, size: l.size, qty: l.qty, serverId: l.id }));
+}
+
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -59,6 +75,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setSaved(load("moda.saved", {}));
     setHydrated(true);
   }, []);
+
+  // Logged in: the server cart is the source of truth. Lines added while
+  // logged out (no serverId) are pushed up first so nothing is lost.
+  const token = session?.token;
+  useEffect(() => {
+    if (!hydrated || !token) return;
+    (async () => {
+      const locals = cart.filter((x) => !x.serverId && !x.item.id.startsWith("demo-"));
+      for (const l of locals) await addCartLine(l.item.id, l.size, l.qty);
+      const c = await getCart();
+      if (c) setCart(fromServer(c));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync runs on login only
+  }, [hydrated, token]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -76,7 +106,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setProfileText: (t) => setSession((s) => (s ? { ...s, profileText: t } : s)),
 
       cart,
-      addToCart: (item, size) =>
+      addToCart: (item, size) => {
+        // Optimistic local update; server response (with line ids) reconciles
         setCart((c) => {
           const i = c.findIndex((x) => x.item.id === item.id && x.size === size);
           if (i >= 0) {
@@ -85,9 +116,29 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             return next;
           }
           return [...c, { item, size, qty: 1 }];
-        }),
-      removeFromCart: (itemId, size) =>
-        setCart((c) => c.filter((x) => !(x.item.id === itemId && x.size === size))),
+        });
+        if (session?.token && !item.id.startsWith("demo-")) {
+          void addCartLine(item.id, size).then((r) => r && setCart(fromServer(r)));
+        }
+      },
+      removeFromCart: (itemId, size) => {
+        const line = cart.find((x) => x.item.id === itemId && x.size === size);
+        setCart((c) => c.filter((x) => !(x.item.id === itemId && x.size === size)));
+        if (line?.serverId) {
+          void removeCartLine(line.serverId).then((r) => r && setCart(fromServer(r)));
+        }
+      },
+      setCartQty: (itemId, size, qty) => {
+        if (qty <= 0) return; // removal goes through removeFromCart
+        const line = cart.find((x) => x.item.id === itemId && x.size === size);
+        setCart((c) =>
+          c.map((x) => (x.item.id === itemId && x.size === size ? { ...x, qty } : x)),
+        );
+        if (line?.serverId) {
+          void updateCartLine(line.serverId, qty).then((r) => r && setCart(fromServer(r)));
+        }
+      },
+      clearCart: () => setCart([]),
       cartCount: cart.reduce((n, x) => n + x.qty, 0),
 
       liked,

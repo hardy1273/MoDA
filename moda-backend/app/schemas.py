@@ -90,6 +90,54 @@ class ItemOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ---------- Cart / Orders ----------
+
+class CartLineIn(BaseModel):
+    item_id: uuid.UUID
+    size: str = Field(min_length=1, max_length=16)
+    qty: int = Field(default=1, ge=1, le=20)
+
+
+class CartLineQty(BaseModel):
+    qty: int = Field(ge=0, le=20)  # 0 removes the line
+
+
+class CartLineOut(BaseModel):
+    id: uuid.UUID
+    item: ItemOut
+    size: str
+    qty: int
+
+    model_config = {"from_attributes": True}
+
+
+class CartOut(BaseModel):
+    items: list[CartLineOut]
+    total: float  # dollars
+
+
+class OrderItemOut(BaseModel):
+    name: str
+    image_url: str
+    price: float
+    size: str
+    qty: int
+
+    model_config = {"from_attributes": True}
+
+
+class OrderOut(BaseModel):
+    id: uuid.UUID
+    status: str
+    total: float
+    payment_provider: str
+    payment_ref: str
+    created_at: datetime
+    items: list[OrderItemOut]
+
+    model_config = {"from_attributes": True}
+
+
 # ---------- Feedback ----------
 
 class FeedbackIn(BaseModel):

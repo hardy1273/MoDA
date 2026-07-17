@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import models, recommender, schemas
+from app import models, payments, recommender, schemas
 from app.auth import create_access_token, get_current_user, hash_password, verify_password
 from app.config import get_settings
 from app.db import get_db, init_db
@@ -236,3 +236,147 @@ def get_item(item_id: uuid.UUID, db: Session = Depends(get_db)):
     if not item:
         raise HTTPException(404, "Item not found")
     return item
+
+
+# ---------- Cart ----------
+
+def _cart_lines(db: Session, user_id: uuid.UUID) -> list[models.CartItem]:
+    return list(
+        db.scalars(
+            select(models.CartItem)
+            .where(models.CartItem.user_id == user_id)
+            .order_by(models.CartItem.created_at)
+        ).all()
+    )
+
+
+def cart_total_cents(lines: list[models.CartItem]) -> int:
+    return sum(line.item.price_cents * line.qty for line in lines)
+
+
+def _cart_out(lines: list[models.CartItem]) -> dict:
+    return {"items": lines, "total": cart_total_cents(lines) / 100}
+
+
+@app.get("/cart", response_model=schemas.CartOut)
+def get_cart(
+    user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return _cart_out(_cart_lines(db, user.id))
+
+
+@app.post("/cart/items", response_model=schemas.CartOut)
+def add_cart_line(
+    payload: schemas.CartLineIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not db.get(models.Item, payload.item_id):
+        raise HTTPException(404, "Item not found")
+    line = db.scalar(
+        select(models.CartItem).where(
+            models.CartItem.user_id == user.id,
+            models.CartItem.item_id == payload.item_id,
+            models.CartItem.size == payload.size,
+        )
+    )
+    if line:
+        line.qty = min(line.qty + payload.qty, 20)
+    else:
+        db.add(
+            models.CartItem(
+                user_id=user.id, item_id=payload.item_id, size=payload.size, qty=payload.qty
+            )
+        )
+    db.commit()
+    return _cart_out(_cart_lines(db, user.id))
+
+
+@app.patch("/cart/items/{line_id}", response_model=schemas.CartOut)
+def update_cart_line(
+    line_id: uuid.UUID,
+    payload: schemas.CartLineQty,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    line = db.get(models.CartItem, line_id)
+    if not line or line.user_id != user.id:
+        raise HTTPException(404, "Cart line not found")
+    if payload.qty == 0:
+        db.delete(line)
+    else:
+        line.qty = payload.qty
+    db.commit()
+    return _cart_out(_cart_lines(db, user.id))
+
+
+@app.delete("/cart/items/{line_id}", response_model=schemas.CartOut)
+def remove_cart_line(
+    line_id: uuid.UUID,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    line = db.get(models.CartItem, line_id)
+    if not line or line.user_id != user.id:
+        raise HTTPException(404, "Cart line not found")
+    db.delete(line)
+    db.commit()
+    return _cart_out(_cart_lines(db, user.id))
+
+
+# ---------- Checkout / Orders ----------
+
+@app.post("/checkout", response_model=schemas.OrderOut)
+def checkout(
+    user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Charge the cart (mock provider) and turn it into an order.
+
+    Totals and line prices come from the items table server-side; the
+    order snapshots name/price/image so history survives catalog edits.
+    """
+    lines = _cart_lines(db, user.id)
+    if not lines:
+        raise HTTPException(400, "Cart is empty")
+
+    total = cart_total_cents(lines)
+    result = payments.charge(total, provider="mock")
+    if not result.ok:
+        raise HTTPException(402, result.message or "Payment failed")
+
+    order = models.Order(
+        user_id=user.id,
+        status="paid",
+        total_cents=total,
+        payment_provider=result.provider,
+        payment_ref=result.ref,
+    )
+    db.add(order)
+    db.flush()
+    for line in lines:
+        db.add(
+            models.OrderItem(
+                order_id=order.id,
+                item_id=line.item_id,
+                name=line.item.name,
+                image_url=line.item.image_url,
+                price_cents=line.item.price_cents,
+                size=line.size,
+                qty=line.qty,
+            )
+        )
+        db.delete(line)
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+@app.get("/orders", response_model=list[schemas.OrderOut])
+def list_orders(
+    user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return db.scalars(
+        select(models.Order)
+        .where(models.Order.user_id == user.id)
+        .order_by(models.Order.created_at.desc())
+    ).all()

@@ -29,6 +29,7 @@ export default function Profile() {
         </dl>
 
         <div className="mt-10 flex flex-col items-center gap-3 text-[13px]">
+          <Link href="/orders" className="underline">Order history</Link>
           <Link href="/quiz" className="underline">Retake style quiz</Link>
           <button
             onClick={() => setSession(null)}
