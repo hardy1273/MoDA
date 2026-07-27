@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { BottomNav } from "@/components/BottomNav";
 import { TopBar } from "@/components/TopBar";
+import { SellerProfile, getSellerProfile } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
 export default function Profile() {
   const { session, setSession, liked, saved } = useStore();
+  const [seller, setSeller] = useState<SellerProfile | null>(null);
+
+  useEffect(() => {
+    if (session?.token) getSellerProfile().then(setSeller);
+    else setSeller(null);
+  }, [session?.token]);
 
   return (
     <>
@@ -30,6 +38,12 @@ export default function Profile() {
 
         <div className="mt-10 flex flex-col items-center gap-3 text-[13px]">
           <Link href="/orders" className="underline">Order history</Link>
+          <Link href="/sell" className="underline">
+            {seller?.is_seller ? `Seller dashboard — ${seller.brand_name}` : "Sell on MODA"}
+          </Link>
+          {seller?.is_admin && (
+            <Link href="/admin" className="underline">Review listing queue</Link>
+          )}
           <Link href="/quiz" className="underline">Retake style quiz</Link>
           <button
             onClick={() => setSession(null)}

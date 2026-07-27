@@ -12,13 +12,12 @@ from __future__ import annotations
 import argparse
 import sys
 
-import numpy as np
 from sqlalchemy import select
 
 from app import models
+from app.catalog import embed_listing, load_image
 from app.db import SessionLocal, init_db
-from app.embeddings import embed_image, embed_texts
-from scripts.ingest import load_image, parse_tags
+from scripts.ingest import parse_tags
 
 
 def main() -> None:
@@ -49,13 +48,9 @@ def main() -> None:
             continue
 
         try:
-            vec = embed_image(load_image(source))
             name = (row.get("name") or "").strip() or row.get("category", "piece")
             caption = (row.get("caption") or "").strip() or None
-            text = f"{name}. {caption}" if caption else name
-            text_vec = embed_texts([text])[0]
-            vec = 0.7 * vec + 0.3 * text_vec
-            vec = vec / np.linalg.norm(vec)
+            vec = embed_listing(load_image(source), name, caption)
 
             if existing:
                 item = existing
@@ -70,7 +65,9 @@ def main() -> None:
             item.style_tags = parse_tags(row.get("style_tags"))
             item.color_tags = parse_tags(row.get("color_tags"))
             item.price_cents = int(row.get("price_cents") or 0)
-            item.embedding = vec.tolist()
+            item.embedding = vec
+            # Seeded catalog bypasses the seller approval queue
+            item.status = models.ITEM_APPROVED
             db.add(item)
 
             if i % 25 == 0:

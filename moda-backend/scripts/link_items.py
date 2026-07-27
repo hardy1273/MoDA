@@ -59,6 +59,7 @@ def main() -> None:
         dist = models.Item.embedding.cosine_distance(list(outfit.embedding))
         rows = db.execute(
             select(models.Item.id, models.Item.category, (1 - dist).label("score"))
+            .where(models.Item.status == models.ITEM_APPROVED)
             .order_by(dist)
             .limit(args.pool)
         ).all()

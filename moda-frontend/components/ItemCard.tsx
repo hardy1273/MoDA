@@ -31,7 +31,9 @@ export function ItemCard({ item }: { item: Item }) {
         <span className="truncate font-medium">{item.name}</span>
         <span className="shrink-0">${item.price.toFixed(2)}</span>
       </div>
-      <p className="text-[11px] uppercase tracking-micro text-faint">{item.category}</p>
+      <p className="text-[11px] uppercase tracking-micro text-faint">
+        {item.brand_name ? `${item.category} · ${item.brand_name}` : item.category}
+      </p>
       <div className="mt-1.5 flex items-center gap-1.5">
         <select
           value={size}

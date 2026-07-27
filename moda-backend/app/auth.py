@@ -64,3 +64,15 @@ def get_current_user(
     if not user:
         raise HTTPException(401, "User no longer exists")
     return user
+
+
+def get_current_seller(user: models.User = Depends(get_current_user)) -> models.User:
+    if not user.is_seller:
+        raise HTTPException(403, "Seller account required")
+    return user
+
+
+def get_current_admin(user: models.User = Depends(get_current_user)) -> models.User:
+    if not user.is_admin:
+        raise HTTPException(403, "Moderator access required")
+    return user

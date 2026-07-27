@@ -22,7 +22,8 @@ export type Item = {
   caption: string | null;
   style_tags: string[];
   color_tags: string[];
-  price: number; // dollars (placeholder MVP pricing until sellers set real ones)
+  price: number; // dollars
+  brand_name?: string | null; // null for the seeded catalog
 };
 
 export type FeedItem = { outfit: Outfit; score: number; explanation: string };
@@ -324,4 +325,111 @@ export async function getOrders(): Promise<Order[] | null> {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Seller portal & moderation
+// ---------------------------------------------------------------------------
+
+export type SellerProfile = {
+  id: string;
+  username: string;
+  is_seller: boolean;
+  brand_name: string | null;
+  is_admin: boolean;
+};
+
+export type ListingStatus = "pending" | "approved" | "rejected" | "removed";
+
+export type Listing = {
+  id: string;
+  name: string;
+  category: string;
+  image_url: string;
+  caption: string | null;
+  style_tags: string[];
+  color_tags: string[];
+  price: number;
+  status: ListingStatus;
+  review_note: string | null;
+  brand_name: string | null;
+  created_at: string;
+};
+
+export type ListingDraft = {
+  name: string;
+  category: string;
+  image_url: string;
+  price: number;
+  caption?: string;
+  style_tags?: string[];
+  color_tags?: string[];
+};
+
+/** Current account incl. seller/moderator flags; null when logged out. */
+export async function getSellerProfile(): Promise<SellerProfile | null> {
+  try {
+    return await http<SellerProfile>("/seller/me");
+  } catch {
+    return null;
+  }
+}
+
+// These throw so forms can surface the reason (409 brand taken, 400 bad image).
+export async function becomeSeller(brandName: string): Promise<SellerProfile> {
+  return http<SellerProfile>("/seller/upgrade", {
+    method: "POST",
+    body: JSON.stringify({ brand_name: brandName }),
+  });
+}
+
+export async function getMyListings(): Promise<Listing[]> {
+  try {
+    return await http<Listing[]>("/seller/listings");
+  } catch {
+    return [];
+  }
+}
+
+export async function createListing(draft: ListingDraft): Promise<Listing> {
+  return http<Listing>("/seller/listings", {
+    method: "POST",
+    body: JSON.stringify(draft),
+  });
+}
+
+export async function updateListing(
+  id: string,
+  patch: Partial<ListingDraft>,
+): Promise<Listing> {
+  return http<Listing>(`/seller/listings/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function removeListing(id: string): Promise<void> {
+  await fetch(`${API}/seller/listings/${id}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  });
+}
+
+export async function getReviewQueue(status: ListingStatus = "pending"): Promise<Listing[]> {
+  try {
+    return await http<Listing[]>(`/admin/listings?status=${status}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function approveListing(id: string): Promise<Listing> {
+  return http<Listing>(`/admin/listings/${id}/approve`, { method: "POST" });
+}
+
+export async function rejectListing(id: string, note: string): Promise<Listing> {
+  return http<Listing>(`/admin/listings/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ note }),
+  });
 }

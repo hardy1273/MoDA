@@ -4,11 +4,18 @@ import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app import models, payments, recommender, schemas
-from app.auth import create_access_token, get_current_user, hash_password, verify_password
+from app import catalog, models, payments, recommender, schemas
+from app.auth import (
+    create_access_token,
+    get_current_admin,
+    get_current_seller,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 from app.config import get_settings
 from app.db import get_db, init_db
 
@@ -232,13 +239,18 @@ def get_outfit_items(outfit_id: uuid.UUID, db: Session = Depends(get_db)):
     rows = db.scalars(
         select(models.Item)
         .join(models.OutfitItem, models.OutfitItem.item_id == models.Item.id)
-        .where(models.OutfitItem.outfit_id == outfit_id)
+        .where(models.OutfitItem.outfit_id == outfit_id, _approved())
         .order_by(models.OutfitItem.rank)
     ).all()
     return rows
 
 
 # ---------- Items ----------
+
+def _approved():
+    """Shoppers only ever see approved listings."""
+    return models.Item.status == models.ITEM_APPROVED
+
 
 @app.get("/items/recommended", response_model=list[schemas.ItemOut])
 def recommended_items(
@@ -251,7 +263,7 @@ def recommended_items(
         raise HTTPException(400, "User has no embedding yet; submit the style quiz first.")
     k = min(max(k, 1), 100)
     dist = models.Item.embedding.cosine_distance(list(user.embedding))
-    return db.scalars(select(models.Item).order_by(dist).limit(k)).all()
+    return db.scalars(select(models.Item).where(_approved()).order_by(dist).limit(k)).all()
 
 
 @app.get("/items", response_model=list[schemas.ItemOut])
@@ -262,7 +274,7 @@ def list_items(
 ):
     """Browse the item catalog (unpersonalized)."""
     k = min(max(k, 1), 100)
-    stmt = select(models.Item)
+    stmt = select(models.Item).where(_approved())
     if category:
         stmt = stmt.where(models.Item.category == category)
     return db.scalars(stmt.order_by(func.random()).limit(k)).all()
@@ -271,8 +283,201 @@ def list_items(
 @app.get("/items/{item_id}", response_model=schemas.ItemOut)
 def get_item(item_id: uuid.UUID, db: Session = Depends(get_db)):
     item = db.get(models.Item, item_id)
-    if not item:
+    if not item or item.status != models.ITEM_APPROVED:
         raise HTTPException(404, "Item not found")
+    return item
+
+
+# ---------- Seller ----------
+
+def _embed_listing_or_400(image_url: str, name: str, caption: str | None) -> list[float]:
+    try:
+        url = catalog.validate_listing_image_url(image_url)
+        return catalog.embed_listing(catalog.load_image(url), name, caption)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        raise HTTPException(400, "Could not load that image URL — check it's a public direct link")
+
+
+@app.post("/seller/upgrade", response_model=schemas.SellerOut)
+def become_seller(
+    payload: schemas.SellerUpgradeIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Turn any account into a seller by claiming a brand name."""
+    brand = payload.brand_name.strip()
+    taken = db.scalar(
+        select(models.User).where(
+            func.lower(models.User.brand_name) == brand.lower(),
+            models.User.id != user.id,
+        )
+    )
+    if taken:
+        raise HTTPException(409, "That brand name is already taken")
+    user.is_seller = True
+    user.brand_name = brand
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.get("/seller/me", response_model=schemas.SellerOut)
+def seller_me(user: models.User = Depends(get_current_user)):
+    return user
+
+
+@app.get("/seller/listings", response_model=list[schemas.ListingOut])
+def my_listings(
+    seller: models.User = Depends(get_current_seller), db: Session = Depends(get_db)
+):
+    return db.scalars(
+        select(models.Item)
+        .where(
+            models.Item.seller_id == seller.id,
+            models.Item.status != models.ITEM_REMOVED,
+        )
+        .order_by(models.Item.created_at.desc())
+    ).all()
+
+
+@app.post("/seller/listings", response_model=schemas.ListingOut, status_code=201)
+def create_listing(
+    payload: schemas.ListingIn,
+    seller: models.User = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """Create a listing. It enters the queue as `pending` until reviewed."""
+    embedding = _embed_listing_or_400(payload.image_url, payload.name, payload.caption)
+    item = models.Item(
+        name=payload.name.strip(),
+        category=payload.category.strip().lower(),
+        image_url=payload.image_url.strip(),
+        caption=(payload.caption or "").strip() or None,
+        style_tags=[t.strip().lower() for t in payload.style_tags if t.strip()],
+        color_tags=[t.strip().lower() for t in payload.color_tags if t.strip()],
+        price_cents=round(payload.price * 100),
+        embedding=embedding,
+        seller_id=seller.id,
+        status=models.ITEM_PENDING,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def _own_listing(db: Session, listing_id: uuid.UUID, seller: models.User) -> models.Item:
+    item = db.get(models.Item, listing_id)
+    if not item or item.seller_id != seller.id or item.status == models.ITEM_REMOVED:
+        raise HTTPException(404, "Listing not found")
+    return item
+
+
+@app.patch("/seller/listings/{listing_id}", response_model=schemas.ListingOut)
+def update_listing(
+    listing_id: uuid.UUID,
+    payload: schemas.ListingUpdate,
+    seller: models.User = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    item = _own_listing(db, listing_id, seller)
+
+    if payload.image_url and payload.image_url.strip() != item.image_url:
+        # New photo means new visual content: re-embed and re-review
+        item.image_url = payload.image_url.strip()
+        item.embedding = _embed_listing_or_400(
+            item.image_url, payload.name or item.name, payload.caption or item.caption
+        )
+        item.status = models.ITEM_PENDING
+        item.review_note = None
+    if payload.name is not None:
+        item.name = payload.name.strip()
+    if payload.category is not None:
+        item.category = payload.category.strip().lower()
+    if payload.caption is not None:
+        item.caption = payload.caption.strip() or None
+    if payload.price is not None:
+        item.price_cents = round(payload.price * 100)
+    if payload.style_tags is not None:
+        item.style_tags = [t.strip().lower() for t in payload.style_tags if t.strip()]
+    if payload.color_tags is not None:
+        item.color_tags = [t.strip().lower() for t in payload.color_tags if t.strip()]
+
+    # A rejected listing goes back in the queue once the seller edits it
+    if item.status == models.ITEM_REJECTED:
+        item.status = models.ITEM_PENDING
+        item.review_note = None
+
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/seller/listings/{listing_id}", status_code=204)
+def remove_listing(
+    listing_id: uuid.UUID,
+    seller: models.User = Depends(get_current_seller),
+    db: Session = Depends(get_db),
+):
+    """Soft delete: order history and carts reference items by id."""
+    item = _own_listing(db, listing_id, seller)
+    item.status = models.ITEM_REMOVED
+    db.execute(delete(models.CartItem).where(models.CartItem.item_id == item.id))
+    db.execute(delete(models.OutfitItem).where(models.OutfitItem.item_id == item.id))
+    db.commit()
+
+
+# ---------- Moderation ----------
+
+@app.get("/admin/listings", response_model=list[schemas.ListingOut])
+def review_queue(
+    status: str = models.ITEM_PENDING,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    if status not in models.ITEM_STATUSES:
+        raise HTTPException(400, f"status must be one of {', '.join(models.ITEM_STATUSES)}")
+    return db.scalars(
+        select(models.Item)
+        .where(models.Item.status == status, models.Item.seller_id.is_not(None))
+        .order_by(models.Item.created_at)
+    ).all()
+
+
+@app.post("/admin/listings/{listing_id}/approve", response_model=schemas.ListingOut)
+def approve_listing(
+    listing_id: uuid.UUID,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    item = db.get(models.Item, listing_id)
+    if not item or item.seller_id is None:
+        raise HTTPException(404, "Listing not found")
+    item.status = models.ITEM_APPROVED
+    item.review_note = None
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.post("/admin/listings/{listing_id}/reject", response_model=schemas.ListingOut)
+def reject_listing(
+    listing_id: uuid.UUID,
+    payload: schemas.ReviewIn,
+    admin: models.User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    item = db.get(models.Item, listing_id)
+    if not item or item.seller_id is None:
+        raise HTTPException(404, "Listing not found")
+    item.status = models.ITEM_REJECTED
+    item.review_note = (payload.note or "").strip() or None
+    # Pull it from any cart it slipped into while approved
+    db.execute(delete(models.CartItem).where(models.CartItem.item_id == item.id))
+    db.commit()
+    db.refresh(item)
     return item
 
 
@@ -309,7 +514,8 @@ def add_cart_line(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not db.get(models.Item, payload.item_id):
+    item = db.get(models.Item, payload.item_id)
+    if not item or item.status != models.ITEM_APPROVED:
         raise HTTPException(404, "Item not found")
     line = db.scalar(
         select(models.CartItem).where(

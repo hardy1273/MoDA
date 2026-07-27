@@ -26,29 +26,15 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
 import sys
-from pathlib import Path
 
 import numpy as np
-import requests
-from PIL import Image
 from sqlalchemy import select
 
 from app import models
+from app.catalog import load_image  # noqa: F401  (re-exported for scripts)
 from app.db import SessionLocal, init_db
 from app.embeddings import embed_image, embed_texts
-
-
-def load_image(source: str) -> Image.Image:
-    if source.startswith(("http://", "https://")):
-        resp = requests.get(source, timeout=20)
-        resp.raise_for_status()
-        return Image.open(io.BytesIO(resp.content))
-    path = Path(source)
-    if not path.exists():
-        raise FileNotFoundError(source)
-    return Image.open(path)
 
 
 def parse_tags(raw: str | None) -> list[str]:

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -25,6 +26,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Listing lifecycle. Only APPROVED reaches shoppers; REMOVED is a soft delete
+# (hard deletes would break order-history and cart foreign keys).
+ITEM_PENDING = "pending"
+ITEM_APPROVED = "approved"
+ITEM_REJECTED = "rejected"
+ITEM_REMOVED = "removed"
+ITEM_STATUSES = (ITEM_PENDING, ITEM_APPROVED, ITEM_REJECTED, ITEM_REMOVED)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -36,6 +46,12 @@ class User(Base):
     # Nullable so users created before auth landed keep working (they just
     # can't log in until a password is set)
     password_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Seller role: any shopper can upgrade by claiming a brand name
+    is_seller: Mapped[bool] = mapped_column(Boolean, default=False)
+    brand_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Moderators who review the listing queue (granted via scripts/grant_admin.py)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
     profile_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Frozen embedding from the onboarding quiz (the "anchor" of taste)
@@ -81,8 +97,9 @@ class Outfit(Base):
 class Item(Base):
     """An individual purchasable piece (hoodie, sneakers, …).
 
-    Prices are placeholder MVP values (deterministic per item within a
-    realistic category range) until sellers set real ones.
+    Seeded catalog rows have no seller and carry placeholder prices;
+    seller-created listings set their own and enter the approval queue.
+    Only `approved` items are visible to shoppers.
     """
 
     __tablename__ = "items"
@@ -102,9 +119,24 @@ class Item(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(DIM))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    # NULL for the seeded catalog; set for seller listings
+    seller_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
+    # pending | approved | rejected | removed  (see ITEM_STATUSES)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # Moderator note shown to the seller when a listing is rejected
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    seller: Mapped["User | None"] = relationship()
+
     @property
     def price(self) -> float:
         return self.price_cents / 100
+
+    @property
+    def brand_name(self) -> str | None:
+        return self.seller.brand_name if self.seller else None
 
     __table_args__ = (
         Index(

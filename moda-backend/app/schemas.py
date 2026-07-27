@@ -22,6 +22,9 @@ class UserOut(BaseModel):
     email: EmailStr
     username: str
     profile_text: str | None = None
+    is_seller: bool = False
+    brand_name: str | None = None
+    is_admin: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -85,9 +88,71 @@ class ItemOut(BaseModel):
     caption: str | None
     style_tags: list[str]
     color_tags: list[str]
-    price: float  # dollars (placeholder MVP pricing)
+    price: float  # dollars
+    brand_name: str | None = None  # None for the seeded catalog
 
     model_config = {"from_attributes": True}
+
+
+# ---------- Seller ----------
+
+class SellerUpgradeIn(BaseModel):
+    brand_name: str = Field(min_length=2, max_length=80)
+
+
+class SellerOut(BaseModel):
+    id: uuid.UUID
+    username: str
+    is_seller: bool
+    brand_name: str | None
+    is_admin: bool
+
+    model_config = {"from_attributes": True}
+
+
+class ListingIn(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    category: str = Field(min_length=2, max_length=40)
+    image_url: str = Field(min_length=8)
+    price: float = Field(gt=0, le=100_000)
+    caption: str | None = Field(default=None, max_length=500)
+    style_tags: list[str] = Field(default_factory=list, max_length=10)
+    color_tags: list[str] = Field(default_factory=list, max_length=10)
+
+
+class ListingUpdate(BaseModel):
+    """All fields optional; only what's provided is changed."""
+
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    category: str | None = Field(default=None, min_length=2, max_length=40)
+    image_url: str | None = Field(default=None, min_length=8)
+    price: float | None = Field(default=None, gt=0, le=100_000)
+    caption: str | None = Field(default=None, max_length=500)
+    style_tags: list[str] | None = Field(default=None, max_length=10)
+    color_tags: list[str] | None = Field(default=None, max_length=10)
+
+
+class ListingOut(BaseModel):
+    """A listing as its own seller (or a moderator) sees it."""
+
+    id: uuid.UUID
+    name: str
+    category: str
+    image_url: str
+    caption: str | None
+    style_tags: list[str]
+    color_tags: list[str]
+    price: float
+    status: str
+    review_note: str | None
+    brand_name: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ReviewIn(BaseModel):
+    note: str | None = Field(default=None, max_length=300)
 
 
 # ---------- Cart / Orders ----------

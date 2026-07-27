@@ -79,13 +79,41 @@ First quiz/ingest call downloads the CLIP weights (~600MB) once.
 | GET | `/items` | — | Browse item catalog (`?category=`, `?k=`) |
 | GET | `/items/recommended?k=` | Bearer | Pieces ranked by the user's taste vector |
 | GET | `/items/{id}` | — | Single item |
+| POST | `/seller/upgrade` | Bearer | Claim a brand name → seller account |
+| GET | `/seller/me` | Bearer | Account flags (is_seller, brand, is_admin) |
+| GET/POST | `/seller/listings` | Seller | List / create listings (new ones are `pending`) |
+| PATCH/DELETE | `/seller/listings/{id}` | Seller | Edit / soft-remove a listing |
+| GET | `/admin/listings?status=` | Moderator | Review queue |
+| POST | `/admin/listings/{id}/approve\|reject` | Moderator | Moderate a listing |
 | GET | `/health` | — | Liveness |
 
 Items are individual pieces (hoodie, sneakers, …) with their own CLIP
-embeddings and placeholder prices (deterministic per item within a realistic
-category range — replaced when seller pricing lands). Pipeline:
-`scripts/fetch_items.py` → `scripts/ingest_items.py` → `scripts/link_items.py`
-(links each outfit to its closest items, one per category).
+embeddings. Seeded catalog items carry placeholder prices (deterministic per
+item within a realistic category range); seller listings carry real ones.
+Seeding pipeline: `scripts/fetch_items.py` → `scripts/ingest_items.py` →
+`scripts/link_items.py` (links each outfit to its closest items, one per
+category).
+
+## Sellers & moderation
+
+Any account becomes a seller by claiming a brand name — no separate signup.
+Listings are embedded on creation (same vector space as the seeded catalog,
+so they're recommendable immediately) and enter the queue as `pending`;
+only `approved` items appear in `/items`, `/items/recommended`,
+shop-the-look, and the cart. Rejection carries a note back to the seller, and
+editing a rejected listing (or swapping its photo) returns it to the queue.
+Deletes are soft (`removed`) because order history references items.
+
+Grant yourself moderator access to work the queue:
+
+```bash
+python -m scripts.grant_admin --email you@example.com
+python -m scripts.grant_admin --list
+```
+
+Listings take an image **URL**. The API fetching seller-supplied URLs is an
+SSRF vector — production should upload from the browser to object storage, or
+fetch through an egress proxy (`app/catalog.py` validates the scheme only).
 
 Protected routes take `Authorization: Bearer <token>`; tokens are HS256 JWTs
 signed with `JWT_SECRET` (set a real value outside local dev).
