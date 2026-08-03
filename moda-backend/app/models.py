@@ -192,6 +192,11 @@ class CartItem(Base):
     item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("items.id"))
     size: Mapped[str] = mapped_column(String(16))
     qty: Mapped[int] = mapped_column(Integer, default=1)
+    # Locks this line to an in-flight Stripe Checkout session, so editing the
+    # cart in another tab mid-payment can't change what was actually bought.
+    checkout_session_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     item: Mapped["Item"] = relationship()
@@ -214,6 +219,11 @@ class Order(Base):
     total_cents: Mapped[int] = mapped_column(Integer)
     payment_provider: Mapped[str] = mapped_column(String(24))
     payment_ref: Mapped[str] = mapped_column(String(64))
+    # Stripe Checkout session that paid for this order. Unique, so a refreshed
+    # return URL and a webhook racing each other can only create one order.
+    payment_session_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     items: Mapped[list["OrderItem"]] = relationship(

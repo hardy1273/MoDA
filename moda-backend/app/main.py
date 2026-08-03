@@ -2,9 +2,10 @@ from contextlib import asynccontextmanager
 
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import catalog, models, payments, payouts, recommender, schemas
@@ -43,6 +44,13 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/payments/config")
+def payments_config():
+    """Lets the checkout UI describe payment honestly (real card vs simulated)."""
+    provider = payments.active_provider()
+    return {"provider": provider, "simulated": provider == "mock"}
 
 
 # ---------- Auth ----------
@@ -570,30 +578,26 @@ def remove_cart_line(
 
 # ---------- Checkout / Orders ----------
 
-@app.post("/checkout", response_model=schemas.OrderOut)
-def checkout(
-    user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    """Charge the cart (mock provider) and turn it into an order.
+def _build_order(
+    db: Session,
+    user_id: uuid.UUID,
+    lines: list[models.CartItem],
+    provider: str,
+    payment_ref: str,
+    session_id: str | None,
+) -> models.Order:
+    """Turn paid-for cart lines into an order, with per-seller payouts.
 
-    Totals and line prices come from the items table server-side; the
-    order snapshots name/price/image so history survives catalog edits.
+    Prices come from the items table, never the client; the order snapshots
+    name/price/image so history survives catalog edits.
     """
-    lines = _cart_lines(db, user.id)
-    if not lines:
-        raise HTTPException(400, "Cart is empty")
-
-    total = cart_total_cents(lines)
-    result = payments.charge(total)
-    if not result.ok:
-        raise HTTPException(402, result.message or "Payment failed")
-
     order = models.Order(
-        user_id=user.id,
+        user_id=user_id,
         status="paid",
-        total_cents=total,
-        payment_provider=result.provider,
-        payment_ref=result.ref,
+        total_cents=cart_total_cents(lines),
+        payment_provider=provider,
+        payment_ref=payment_ref,
+        payment_session_id=session_id,
     )
     db.add(order)
     db.flush()
@@ -611,11 +615,141 @@ def checkout(
             )
         )
         db.delete(line)
-
     _create_payouts(db, order, lines)
-    db.commit()
+    return order
+
+
+def finalize_session(db: Session, session_id: str) -> models.Order | None:
+    """Create the order for a paid Checkout session, exactly once.
+
+    Called from both the buyer's return URL and the Stripe webhook, which
+    routinely race each other — the unique constraint on
+    `payment_session_id` is what makes that safe.
+    """
+    existing = db.scalar(
+        select(models.Order).where(models.Order.payment_session_id == session_id)
+    )
+    if existing:
+        return existing
+
+    status = payments.retrieve_checkout_session(session_id)
+    if not status.ok or not status.paid:
+        return None
+
+    lines = list(
+        db.scalars(
+            select(models.CartItem).where(
+                models.CartItem.checkout_session_id == session_id
+            )
+        ).all()
+    )
+    if not lines:
+        return None  # already consumed, or the session isn't ours
+
+    order = _build_order(
+        db,
+        user_id=lines[0].user_id,
+        lines=lines,
+        provider="stripe",
+        payment_ref=status.payment_ref,
+        session_id=session_id,
+    )
+    try:
+        db.commit()
+    except IntegrityError:
+        # The webhook and the return URL landed together; the other won.
+        db.rollback()
+        return db.scalar(
+            select(models.Order).where(models.Order.payment_session_id == session_id)
+        )
     db.refresh(order)
     return order
+
+
+@app.post("/checkout", response_model=schemas.CheckoutOut)
+def checkout(
+    user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Start payment.
+
+    With Stripe configured this returns a hosted Checkout URL and the order
+    is only created once payment confirms. Without a key the sale is
+    simulated and the order is created immediately.
+    """
+    lines = _cart_lines(db, user.id)
+    if not lines:
+        raise HTTPException(400, "Cart is empty")
+    total = cart_total_cents(lines)
+
+    if payments.active_provider() == "mock":
+        result = payments.charge(total)
+        if not result.ok:
+            raise HTTPException(402, result.message or "Payment failed")
+        order = _build_order(
+            db,
+            user_id=user.id,
+            lines=lines,
+            provider=result.provider,
+            payment_ref=result.ref,
+            session_id=None,
+        )
+        db.commit()
+        db.refresh(order)
+        return schemas.CheckoutOut(mode="simulated", order=order)
+
+    base = get_settings().app_base_url.rstrip("/")
+    session = payments.create_checkout_session(
+        lines=[
+            payments.CheckoutLine(
+                name=l.item.name,
+                image_url=l.item.image_url,
+                unit_amount_cents=l.item.price_cents,
+                qty=l.qty,
+            )
+            for l in lines
+        ],
+        # Stripe substitutes the real id into this placeholder
+        success_url=f"{base}/cart?session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=f"{base}/cart?checkout=cancelled",
+        customer_email=user.email,
+    )
+    if not session.ok:
+        raise HTTPException(502, f"Could not start checkout: {session.message}")
+
+    # Lock these lines to the session so a cart edit mid-payment can't
+    # change what was actually bought
+    for line in lines:
+        line.checkout_session_id = session.session_id
+    db.commit()
+    return schemas.CheckoutOut(mode="redirect", url=session.url)
+
+
+@app.post("/checkout/confirm", response_model=schemas.OrderOut)
+def confirm_checkout(
+    payload: schemas.ConfirmIn,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Finalize after the buyer returns from Stripe."""
+    order = finalize_session(db, payload.session_id)
+    if not order:
+        raise HTTPException(402, "Payment not completed")
+    if order.user_id != user.id:
+        raise HTTPException(404, "Order not found")
+    return order
+
+
+@app.post("/webhooks/stripe", status_code=204)
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Stripe's own confirmation — the reliable path when a buyer closes
+    the tab before being redirected back."""
+    event = payments.verify_webhook(
+        await request.body(), request.headers.get("stripe-signature", "")
+    )
+    if event is None:
+        raise HTTPException(400, "Invalid webhook signature")
+    if event["type"] == "checkout.session.completed":
+        finalize_session(db, event["data"]["object"]["id"])
 
 
 def _create_payouts(db: Session, order: models.Order, lines: list[models.CartItem]) -> None:

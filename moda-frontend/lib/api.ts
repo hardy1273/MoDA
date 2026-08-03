@@ -314,9 +314,33 @@ export async function removeCartLine(lineId: string): Promise<CartData | null> {
   }
 }
 
+export type PaymentsConfig = { provider: string; simulated: boolean };
+
+/** Defaults to simulated if unreachable — never implies a real charge. */
+export async function getPaymentsConfig(): Promise<PaymentsConfig> {
+  try {
+    return await http<PaymentsConfig>("/payments/config");
+  } catch {
+    return { provider: "mock", simulated: true };
+  }
+}
+
+/** Either the finished order (simulated) or a Stripe URL to send the buyer to. */
+export type CheckoutStart =
+  | { mode: "simulated"; order: Order; url: null }
+  | { mode: "redirect"; url: string; order: null };
+
 /** Throws on failure so the cart page can show what went wrong. */
-export async function checkout(): Promise<Order> {
-  return http<Order>("/checkout", { method: "POST" });
+export async function checkout(): Promise<CheckoutStart> {
+  return http<CheckoutStart>("/checkout", { method: "POST" });
+}
+
+/** Finalize after returning from Stripe. Safe to call twice. */
+export async function confirmCheckout(sessionId: string): Promise<Order> {
+  return http<Order>("/checkout/confirm", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId }),
+  });
 }
 
 export async function getOrders(): Promise<Order[] | null> {

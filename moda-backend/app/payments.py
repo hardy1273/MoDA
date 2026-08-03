@@ -78,18 +78,127 @@ def _mock_ref(prefix: str) -> str:
 # Charging the buyer
 # ---------------------------------------------------------------------------
 
-def charge(amount_cents: int) -> PaymentResult:
-    """Charge the buyer for a whole cart.
+@dataclass(frozen=True)
+class CheckoutLine:
+    name: str
+    image_url: str
+    unit_amount_cents: int
+    qty: int
 
-    Always simulated today, even with Stripe configured — hence the hard
-    "mock" provider. Taking a real card means collecting payment details in
-    the browser (Stripe Elements or a hosted Checkout Session) and confirming
-    a PaymentIntent, which is frontend work that doesn't exist yet. The
-    payout side below is real whenever a key is present.
+
+@dataclass(frozen=True)
+class CheckoutSessionResult:
+    ok: bool
+    provider: str
+    session_id: str
+    url: str | None  # None when simulated — nothing to redirect to
+    simulated: bool = False
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class SessionStatus:
+    ok: bool
+    paid: bool
+    amount_total_cents: int
+    payment_ref: str
+    message: str = ""
+
+
+def charge(amount_cents: int) -> PaymentResult:
+    """Simulated charge, used when no Stripe key is configured.
+
+    With Stripe configured the buyer pays through a hosted Checkout Session
+    (see `create_checkout_session`) and this is never called.
     """
     if amount_cents <= 0:
         return PaymentResult(ok=False, provider="mock", ref="", message="Nothing to charge")
     return PaymentResult(ok=True, provider="mock", ref=_mock_ref("mock"), simulated=True)
+
+
+def create_checkout_session(
+    lines: list[CheckoutLine],
+    success_url: str,
+    cancel_url: str,
+    customer_email: str | None = None,
+) -> CheckoutSessionResult:
+    """Hosted payment page. Card details never touch our servers."""
+    provider = active_provider()
+    if not lines:
+        return CheckoutSessionResult(
+            ok=False, provider=provider, session_id="", url=None, message="Cart is empty"
+        )
+    if provider == "mock":
+        return CheckoutSessionResult(
+            ok=True,
+            provider="mock",
+            session_id=_mock_ref("cs_mock"),
+            url=None,
+            simulated=True,
+        )
+    try:
+        stripe = _stripe()
+        currency = get_settings().currency
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            customer_email=customer_email,
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": currency,
+                        "unit_amount": line.unit_amount_cents,
+                        "product_data": {
+                            "name": line.name,
+                            # Stripe rejects non-public URLs; skip rather than fail
+                            "images": [line.image_url] if line.image_url.startswith("https://") else [],
+                        },
+                    },
+                    "quantity": line.qty,
+                }
+                for line in lines
+            ],
+        )
+        return CheckoutSessionResult(
+            ok=True, provider="stripe", session_id=session.id, url=session.url
+        )
+    except Exception as e:  # noqa: BLE001
+        return CheckoutSessionResult(
+            ok=False, provider="stripe", session_id="", url=None, message=str(e)
+        )
+
+
+def retrieve_checkout_session(session_id: str) -> SessionStatus:
+    """Did this session actually get paid? Stripe is the authority, not the
+    browser that came back to our return URL."""
+    if active_provider() == "mock":
+        return SessionStatus(
+            ok=True, paid=True, amount_total_cents=0, payment_ref=session_id
+        )
+    try:
+        session = _stripe().checkout.Session.retrieve(session_id)
+        return SessionStatus(
+            ok=True,
+            paid=session.payment_status == "paid",
+            amount_total_cents=int(session.amount_total or 0),
+            payment_ref=str(session.payment_intent or session.id),
+        )
+    except Exception as e:  # noqa: BLE001
+        return SessionStatus(
+            ok=False, paid=False, amount_total_cents=0, payment_ref="", message=str(e)
+        )
+
+
+def verify_webhook(payload: bytes, signature: str) -> dict | None:
+    """Validate a Stripe webhook signature. None means reject the request."""
+    secret = get_settings().stripe_webhook_secret
+    if not secret:
+        return None
+    try:
+        return _stripe().Webhook.construct_event(payload, signature, secret)
+    except Exception:  # noqa: BLE001 — bad signature or malformed payload
+        return None
 
 
 # ---------------------------------------------------------------------------

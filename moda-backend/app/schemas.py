@@ -242,6 +242,18 @@ class OrderItemOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CheckoutOut(BaseModel):
+    """Either the order (simulated) or somewhere to send the buyer."""
+
+    mode: str  # "simulated" | "redirect"
+    url: str | None = None
+    order: "OrderOut | None" = None
+
+
+class ConfirmIn(BaseModel):
+    session_id: str = Field(min_length=4, max_length=128)
+
+
 class OrderOut(BaseModel):
     id: uuid.UUID
     status: str

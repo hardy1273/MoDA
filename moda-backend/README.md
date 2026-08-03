@@ -89,6 +89,10 @@ First quiz/ingest call downloads the CLIP weights (~600MB) once.
 | POST | `/seller/payouts/onboard` | Seller | Start Stripe Connect onboarding |
 | POST | `/seller/payouts/retry` | Seller | Settle everything outstanding |
 | GET | `/seller/earnings` | Seller | Lifetime totals + payout history |
+| GET | `/payments/config` | — | Whether payment is real or simulated |
+| POST | `/checkout` | Bearer | Start payment (redirect or simulated) |
+| POST | `/checkout/confirm` | Bearer | Finalize after returning from Stripe |
+| POST | `/webhooks/stripe` | Signature | Stripe's own confirmation |
 | GET | `/health` | — | Liveness |
 
 Items are individual pieces (hoodie, sneakers, …) with their own CLIP
@@ -139,10 +143,43 @@ verification) with **separate charges and transfers**. With
 instantly, transfers return fake references, and every response carries
 `simulated: true` — so the whole marketplace flow is exercisable locally.
 
-**Not yet wired:** taking a real card. `payments.charge()` is always
-simulated because collecting card details needs Stripe Elements or a hosted
-Checkout Session in the browser. Transfers assume the platform balance is
-already funded (in test mode, fund it with test charges).
+## Taking payment
+
+Buyers pay through a **hosted Stripe Checkout** page, so card details never
+touch this server and the app stays out of PCI scope.
+
+```
+POST /checkout            -> {mode: "redirect", url}  (Stripe configured)
+                          -> {mode: "simulated", order}  (no key)
+   buyer pays on Stripe, returns to /cart?session_id=...
+POST /checkout/confirm    -> creates the order, idempotently
+POST /webhooks/stripe     -> same, for buyers who close the tab
+```
+
+Because payment happens off-server, the order is created *after* confirmation,
+and two things guard the gap:
+
+- `orders.payment_session_id` is **unique**, so the return URL and the webhook
+  racing each other can only ever produce one order (the loser catches the
+  integrity error and returns the winner's).
+- Cart lines are locked to the in-flight session via
+  `cart_items.checkout_session_id`, so editing the cart in another tab mid-payment
+  can't change what was actually bought.
+
+Payment status is read back from Stripe, never trusted from the returning
+browser. With no key configured the sale is simulated and the order is created
+immediately — `GET /payments/config` tells the UI which it is, so the checkout
+screen never implies a real charge.
+
+For webhooks locally:
+
+```bash
+stripe listen --forward-to localhost:8000/webhooks/stripe
+# paste the printed signing secret into STRIPE_WEBHOOK_SECRET
+```
+
+Transfers to sellers assume the platform balance is funded (in test mode,
+fund it with test-card charges).
 
 Protected routes take `Authorization: Bearer <token>`; tokens are HS256 JWTs
 signed with `JWT_SECRET` (set a real value outside local dev).

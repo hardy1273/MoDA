@@ -4,29 +4,69 @@
 // (mock provider for now — no real charge happens).
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BottomNav } from "@/components/BottomNav";
 import { TopBar } from "@/components/TopBar";
-import { Order, checkout } from "@/lib/api";
+import { Order, checkout, confirmCheckout, getPaymentsConfig } from "@/lib/api";
 import { useStore } from "@/lib/store";
 
-type Phase = "cart" | "confirm" | "paying" | "done";
+type Phase = "cart" | "confirm" | "paying" | "returning" | "done";
 
 export default function Cart() {
   const { session, cart, removeFromCart, setCartQty, clearCart } = useStore();
   const [phase, setPhase] = useState<Phase>("cart");
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [simulated, setSimulated] = useState(true);
+
+  useEffect(() => {
+    getPaymentsConfig().then((c) => setSimulated(c.simulated));
+  }, []);
 
   const total = cart.reduce((n, x) => n + x.item.price * x.qty, 0);
   const canCheckout = !!session?.token && cart.every((x) => x.serverId);
+
+  // Coming back from Stripe: ?session_id=… means paid, ?checkout=cancelled
+  // means they backed out. Read from location rather than useSearchParams so
+  // the page needs no Suspense boundary.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("session_id");
+    const cancelled = params.get("checkout") === "cancelled";
+
+    if (cancelled) {
+      setError("Payment cancelled — your cart is still here.");
+      window.history.replaceState({}, "", "/cart");
+      return;
+    }
+    if (!sessionId) return;
+
+    setPhase("returning");
+    confirmCheckout(sessionId)
+      .then((o) => {
+        setOrder(o);
+        clearCart();
+        setPhase("done");
+      })
+      .catch(() => {
+        setError("We couldn't confirm that payment. If you were charged, it'll appear in your orders shortly.");
+        setPhase("cart");
+      })
+      .finally(() => window.history.replaceState({}, "", "/cart"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on return
+  }, []);
 
   async function pay() {
     setPhase("paying");
     setError(null);
     try {
-      const o = await checkout();
-      setOrder(o);
+      const r = await checkout();
+      if (r.mode === "redirect" && r.url) {
+        window.location.href = r.url; // hosted Stripe Checkout
+        return;
+      }
+      setOrder(r.order);
       clearCart();
       setPhase("done");
     } catch (e) {
@@ -160,18 +200,32 @@ export default function Cart() {
                 </div>
               ))}
 
+            {phase === "returning" && (
+              <p className="mt-5 border border-ink p-4 text-center text-[13px]">
+                Confirming your payment…
+              </p>
+            )}
+
             {(phase === "confirm" || phase === "paying") && (
               <div className="mt-5 border border-ink p-4 text-center">
-                <p className="text-[13px] font-semibold">MODA Pay</p>
+                <p className="text-[13px] font-semibold">
+                  {simulated ? "MODA Pay" : "Secure checkout"}
+                </p>
                 <p className="mt-1 text-[11px] italic text-faint">
-                  test mode — no real charge will be made
+                  {simulated
+                    ? "test mode — no real charge will be made"
+                    : "You'll pay on Stripe's secure page, then come back here."}
                 </p>
                 <button
                   onClick={pay}
                   disabled={phase === "paying"}
                   className="mt-3 w-full bg-ink py-3 text-[13px] uppercase tracking-micro text-paper hover:bg-ink/85 disabled:opacity-50"
                 >
-                  {phase === "paying" ? "Processing…" : `Pay $${total.toFixed(2)}`}
+                  {phase === "paying"
+                    ? simulated
+                      ? "Processing…"
+                      : "Redirecting…"
+                    : `Pay $${total.toFixed(2)}`}
                 </button>
                 <button
                   onClick={() => setPhase("cart")}

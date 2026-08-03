@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # Payments & payouts. Empty stripe_secret_key => simulated provider,
     # which still exercises the whole onboarding/payout flow locally.
     stripe_secret_key: str = ""
+    # From `stripe listen` locally, or the dashboard endpoint in production
+    stripe_webhook_secret: str = ""
     currency: str = "usd"
     # Platform commission in basis points (1000 = 10%)
     platform_fee_bps: int = 1000
