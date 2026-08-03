@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-jwt-secret-change-me-for-production-use"
     jwt_expires_minutes: int = 60 * 24 * 7  # 7 days
 
+    # Payments & payouts. Empty stripe_secret_key => simulated provider,
+    # which still exercises the whole onboarding/payout flow locally.
+    stripe_secret_key: str = ""
+    currency: str = "usd"
+    # Platform commission in basis points (1000 = 10%)
+    platform_fee_bps: int = 1000
+    # Where Stripe sends sellers back after hosted onboarding
+    app_base_url: str = "http://localhost:3000"
+
 
 @lru_cache
 def get_settings() -> Settings:

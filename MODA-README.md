@@ -85,6 +85,10 @@ First quiz/ingest call downloads the CLIP weights (~600MB) once.
 | PATCH/DELETE | `/seller/listings/{id}` | Seller | Edit / soft-remove a listing |
 | GET | `/admin/listings?status=` | Moderator | Review queue |
 | POST | `/admin/listings/{id}/approve\|reject` | Moderator | Moderate a listing |
+| GET | `/seller/payouts/status` | Seller | Onboarding state + pending/paid totals |
+| POST | `/seller/payouts/onboard` | Seller | Start Stripe Connect onboarding |
+| POST | `/seller/payouts/retry` | Seller | Settle everything outstanding |
+| GET | `/seller/earnings` | Seller | Lifetime totals + payout history |
 | GET | `/health` | — | Liveness |
 
 Items are individual pieces (hoodie, sneakers, …) with their own CLIP
@@ -114,6 +118,31 @@ python -m scripts.grant_admin --list
 Listings take an image **URL**. The API fetching seller-supplied URLs is an
 SSRF vector — production should upload from the browser to object storage, or
 fetch through an egress proxy (`app/catalog.py` validates the scheme only).
+
+## Payouts (Stripe Connect)
+
+One cart can hold pieces from several sellers plus platform-owned seeded
+stock, so a single charge fans out into one transfer per seller. At checkout
+the order is split by seller (`app/payouts.py`), the platform commission
+(`PLATFORM_FEE_BPS`, default 10%) is deducted, and a `payouts` row is written
+per seller.
+
+A seller who hasn't finished onboarding still gets a payout row — it stays
+`pending` and settles via `POST /seller/payouts/retry` once they're verified,
+mirroring how Stripe holds funds. Fees are computed on each seller's combined
+gross, not per line, so repeated rounding can't nibble at their earnings;
+`fee_cents + net_cents == gross_cents` always holds exactly.
+
+Connect uses **Express** accounts (Stripe hosts onboarding and identity
+verification) with **separate charges and transfers**. With
+`STRIPE_SECRET_KEY` unset the provider is simulated: onboarding completes
+instantly, transfers return fake references, and every response carries
+`simulated: true` — so the whole marketplace flow is exercisable locally.
+
+**Not yet wired:** taking a real card. `payments.charge()` is always
+simulated because collecting card details needs Stripe Elements or a hosted
+Checkout Session in the browser. Transfers assume the platform balance is
+already funded (in test mode, fund it with test charges).
 
 Protected routes take `Authorization: Bearer <token>`; tokens are HS256 JWTs
 signed with `JWT_SECRET` (set a real value outside local dev).

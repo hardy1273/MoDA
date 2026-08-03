@@ -50,6 +50,11 @@ class User(Base):
     # Seller role: any shopper can upgrade by claiming a brand name
     is_seller: Mapped[bool] = mapped_column(Boolean, default=False)
     brand_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Stripe Connect (Express). Set once onboarding starts; payouts_enabled
+    # mirrors Stripe's own flag and is only true after they finish identity
+    # verification — until then earnings accrue as pending payouts.
+    stripe_account_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    payouts_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Moderators who review the listing queue (granted via scripts/grant_admin.py)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -237,12 +242,75 @@ class OrderItem(Base):
     price_cents: Mapped[int] = mapped_column(Integer)
     size: Mapped[str] = mapped_column(String(16))
     qty: Mapped[int] = mapped_column(Integer)
+    # Snapshot of who sold this line; NULL = platform-owned seeded stock.
+    # Kept on the order so payouts survive a seller deleting the listing.
+    seller_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
 
     order: Mapped["Order"] = relationship(back_populates="items")
 
     @property
     def price(self) -> float:
         return self.price_cents / 100
+
+
+# Payout lifecycle
+PAYOUT_PENDING = "pending"  # owed, but the seller can't receive it yet
+PAYOUT_PAID = "paid"
+PAYOUT_FAILED = "failed"
+PAYOUT_STATUSES = (PAYOUT_PENDING, PAYOUT_PAID, PAYOUT_FAILED)
+
+
+class Payout(Base):
+    """One seller's share of one order.
+
+    Created at checkout for every seller in the cart. Transfers to sellers
+    who haven't finished Stripe onboarding stay `pending` until they do,
+    which mirrors how Stripe itself holds funds.
+    """
+
+    __tablename__ = "payouts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("orders.id"), index=True
+    )
+    seller_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), index=True
+    )
+
+    gross_cents: Mapped[int] = mapped_column(Integer)
+    fee_cents: Mapped[int] = mapped_column(Integer)
+    net_cents: Mapped[int] = mapped_column(Integer)
+
+    status: Mapped[str] = mapped_column(String(16), default=PAYOUT_PENDING, index=True)
+    provider: Mapped[str] = mapped_column(String(24))
+    transfer_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    order: Mapped["Order"] = relationship()
+
+    @property
+    def gross(self) -> float:
+        return self.gross_cents / 100
+
+    @property
+    def fee(self) -> float:
+        return self.fee_cents / 100
+
+    @property
+    def net(self) -> float:
+        return self.net_cents / 100
+
+    __table_args__ = (
+        UniqueConstraint("order_id", "seller_id", name="uq_payout_order_seller"),
+    )
 
 
 class Impression(Base):

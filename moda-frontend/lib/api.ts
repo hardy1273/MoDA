@@ -415,6 +415,70 @@ export async function removeListing(id: string): Promise<void> {
   });
 }
 
+// ---- payouts ----
+
+export type PayoutStatus = {
+  onboarding_started: boolean;
+  payouts_enabled: boolean;
+  provider: string;
+  simulated: boolean;
+  pending_cents: number;
+  paid_cents: number;
+};
+
+export type Payout = {
+  id: string;
+  order_id: string;
+  gross: number;
+  fee: number;
+  net: number;
+  status: "pending" | "paid" | "failed";
+  provider: string;
+  transfer_ref: string | null;
+  failure_reason: string | null;
+  created_at: string;
+  paid_at: string | null;
+};
+
+export type Earnings = {
+  brand_name: string | null;
+  payouts_enabled: boolean;
+  lifetime_gross: number;
+  lifetime_fees: number;
+  lifetime_net: number;
+  pending_net: number;
+  payouts: Payout[];
+};
+
+export async function getPayoutStatus(): Promise<PayoutStatus | null> {
+  try {
+    return await http<PayoutStatus>("/seller/payouts/status");
+  } catch {
+    return null;
+  }
+}
+
+/** Returns a hosted Stripe URL to redirect to, or null when simulated. */
+export async function startPayoutOnboarding(): Promise<{
+  url: string | null;
+  simulated: boolean;
+  payouts_enabled: boolean;
+}> {
+  return http("/seller/payouts/onboard", { method: "POST" });
+}
+
+export async function retryPayouts(): Promise<Payout[]> {
+  return http<Payout[]>("/seller/payouts/retry", { method: "POST" });
+}
+
+export async function getEarnings(): Promise<Earnings | null> {
+  try {
+    return await http<Earnings>("/seller/earnings");
+  } catch {
+    return null;
+  }
+}
+
 export async function getReviewQueue(status: ListingStatus = "pending"): Promise<Listing[]> {
   try {
     return await http<Listing[]>(`/admin/listings?status=${status}`);

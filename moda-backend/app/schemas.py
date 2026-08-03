@@ -155,6 +155,57 @@ class ReviewIn(BaseModel):
     note: str | None = Field(default=None, max_length=300)
 
 
+# ---------- Payouts ----------
+
+class PayoutStatusOut(BaseModel):
+    """Whether this seller can currently be paid."""
+
+    onboarding_started: bool
+    payouts_enabled: bool
+    provider: str
+    simulated: bool
+    pending_cents: int
+    paid_cents: int
+
+    @property
+    def pending(self) -> float:
+        return self.pending_cents / 100
+
+
+class OnboardingOut(BaseModel):
+    ok: bool
+    # None when simulated — there's no hosted page to visit
+    url: str | None = None
+    simulated: bool = False
+    payouts_enabled: bool = False
+
+
+class PayoutOut(BaseModel):
+    id: uuid.UUID
+    order_id: uuid.UUID
+    gross: float
+    fee: float
+    net: float
+    status: str
+    provider: str
+    transfer_ref: str | None
+    failure_reason: str | None
+    created_at: datetime
+    paid_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class EarningsOut(BaseModel):
+    brand_name: str | None
+    payouts_enabled: bool
+    lifetime_gross: float
+    lifetime_fees: float
+    lifetime_net: float
+    pending_net: float
+    payouts: list[PayoutOut]
+
+
 # ---------- Cart / Orders ----------
 
 class CartLineIn(BaseModel):

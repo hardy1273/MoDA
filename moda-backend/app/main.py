@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app import catalog, models, payments, recommender, schemas
+from app import catalog, models, payments, payouts, recommender, schemas
 from app.auth import (
     create_access_token,
     get_current_admin,
@@ -584,7 +584,7 @@ def checkout(
         raise HTTPException(400, "Cart is empty")
 
     total = cart_total_cents(lines)
-    result = payments.charge(total, provider="mock")
+    result = payments.charge(total)
     if not result.ok:
         raise HTTPException(402, result.message or "Payment failed")
 
@@ -607,12 +607,179 @@ def checkout(
                 price_cents=line.item.price_cents,
                 size=line.size,
                 qty=line.qty,
+                seller_id=line.item.seller_id,
             )
         )
         db.delete(line)
+
+    _create_payouts(db, order, lines)
     db.commit()
     db.refresh(order)
     return order
+
+
+def _create_payouts(db: Session, order: models.Order, lines: list[models.CartItem]) -> None:
+    """Split the order per seller and attempt each transfer.
+
+    A seller who hasn't finished onboarding still gets a payout row — it
+    stays `pending` and is settled by `POST /seller/payouts/retry` once
+    they're verified, which mirrors Stripe holding funds.
+    """
+    settings_ = get_settings()
+    splits = payouts.split_order(
+        [(l.item.seller_id, l.item.price_cents, l.qty) for l in lines],
+        fee_bps=settings_.platform_fee_bps,
+    )
+    for split in splits:
+        seller = db.get(models.User, split.seller_id)
+        payout = models.Payout(
+            order_id=order.id,
+            seller_id=split.seller_id,
+            gross_cents=split.gross_cents,
+            fee_cents=split.fee_cents,
+            net_cents=split.net_cents,
+            provider=payments.active_provider(),
+            status=models.PAYOUT_PENDING,
+        )
+        db.add(payout)
+        _attempt_transfer(payout, seller, order)
+
+
+def _attempt_transfer(
+    payout: models.Payout, seller: models.User | None, order: models.Order
+) -> None:
+    """Move a pending payout to paid/failed. Safe to call repeatedly."""
+    if payout.status == models.PAYOUT_PAID:
+        return
+    if not seller or not seller.payouts_enabled or not seller.stripe_account_id:
+        payout.failure_reason = "Seller has not completed payout onboarding"
+        return
+
+    result = payments.transfer(
+        payout.net_cents, seller.stripe_account_id, str(order.id)
+    )
+    if result.ok:
+        payout.status = models.PAYOUT_PAID
+        payout.transfer_ref = result.ref
+        payout.paid_at = models.utcnow()
+        payout.failure_reason = None
+    else:
+        payout.status = models.PAYOUT_FAILED
+        payout.failure_reason = result.message or "Transfer failed"
+
+
+# ---------- Seller payouts ----------
+
+def _payout_totals(db: Session, seller_id: uuid.UUID) -> tuple[int, int]:
+    """(pending net, paid net) in cents."""
+    rows = db.execute(
+        select(models.Payout.status, func.sum(models.Payout.net_cents))
+        .where(models.Payout.seller_id == seller_id)
+        .group_by(models.Payout.status)
+    ).all()
+    by_status = {status: int(total or 0) for status, total in rows}
+    pending = by_status.get(models.PAYOUT_PENDING, 0) + by_status.get(
+        models.PAYOUT_FAILED, 0
+    )
+    return pending, by_status.get(models.PAYOUT_PAID, 0)
+
+
+@app.get("/seller/payouts/status", response_model=schemas.PayoutStatusOut)
+def payout_status(
+    seller: models.User = Depends(get_current_seller), db: Session = Depends(get_db)
+):
+    # Stripe is the source of truth for verification state
+    if seller.stripe_account_id and not seller.payouts_enabled:
+        if payments.account_payouts_enabled(seller.stripe_account_id):
+            seller.payouts_enabled = True
+            db.commit()
+
+    pending, paid = _payout_totals(db, seller.id)
+    provider = payments.active_provider()
+    return schemas.PayoutStatusOut(
+        onboarding_started=seller.stripe_account_id is not None,
+        payouts_enabled=seller.payouts_enabled,
+        provider=provider,
+        simulated=provider == "mock",
+        pending_cents=pending,
+        paid_cents=paid,
+    )
+
+
+@app.post("/seller/payouts/onboard", response_model=schemas.OnboardingOut)
+def start_payout_onboarding(
+    seller: models.User = Depends(get_current_seller), db: Session = Depends(get_db)
+):
+    """Create the connected account (once) and return a hosted onboarding link."""
+    if not seller.stripe_account_id:
+        account = payments.create_connect_account(seller.email, seller.brand_name)
+        if not account.ok:
+            raise HTTPException(502, f"Could not start onboarding: {account.message}")
+        seller.stripe_account_id = account.account_id
+        db.commit()
+
+    base = get_settings().app_base_url.rstrip("/")
+    link = payments.onboarding_link(
+        seller.stripe_account_id,
+        return_url=f"{base}/sell?payouts=done",
+        refresh_url=f"{base}/sell?payouts=retry",
+    )
+    if not link.ok:
+        raise HTTPException(502, f"Could not start onboarding: {link.message}")
+
+    if link.simulated:
+        # No hosted page to visit — mark ready so the flow is exercisable
+        seller.payouts_enabled = True
+        db.commit()
+
+    return schemas.OnboardingOut(
+        ok=True,
+        url=link.url,
+        simulated=link.simulated,
+        payouts_enabled=seller.payouts_enabled,
+    )
+
+
+@app.post("/seller/payouts/retry", response_model=list[schemas.PayoutOut])
+def retry_payouts(
+    seller: models.User = Depends(get_current_seller), db: Session = Depends(get_db)
+):
+    """Settle everything owed — used after onboarding completes."""
+    if seller.stripe_account_id and not seller.payouts_enabled:
+        seller.payouts_enabled = payments.account_payouts_enabled(seller.stripe_account_id)
+
+    outstanding = db.scalars(
+        select(models.Payout).where(
+            models.Payout.seller_id == seller.id,
+            models.Payout.status.in_([models.PAYOUT_PENDING, models.PAYOUT_FAILED]),
+        )
+    ).all()
+    for payout in outstanding:
+        payout.status = models.PAYOUT_PENDING
+        _attempt_transfer(payout, seller, payout.order)
+    db.commit()
+    return outstanding
+
+
+@app.get("/seller/earnings", response_model=schemas.EarningsOut)
+def seller_earnings(
+    seller: models.User = Depends(get_current_seller), db: Session = Depends(get_db)
+):
+    rows = db.scalars(
+        select(models.Payout)
+        .where(models.Payout.seller_id == seller.id)
+        .order_by(models.Payout.created_at.desc())
+    ).all()
+    pending, _ = _payout_totals(db, seller.id)
+    return schemas.EarningsOut(
+        brand_name=seller.brand_name,
+        payouts_enabled=seller.payouts_enabled,
+        lifetime_gross=sum(p.gross_cents for p in rows) / 100,
+        lifetime_fees=sum(p.fee_cents for p in rows) / 100,
+        lifetime_net=sum(p.net_cents for p in rows) / 100,
+        pending_net=pending / 100,
+        payouts=rows,
+    )
 
 
 @app.get("/orders", response_model=list[schemas.OrderOut])

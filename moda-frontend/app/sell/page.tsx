@@ -6,6 +6,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { BottomNav } from "@/components/BottomNav";
+import { PayoutsPanel } from "@/components/PayoutsPanel";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TopBar } from "@/components/TopBar";
 import {
@@ -184,6 +185,8 @@ export default function Sell() {
             <Link href="/admin" className="underline">Review listing queue →</Link>
           </p>
         )}
+
+        <PayoutsPanel />
 
         <section className="mt-7">
           <h2 className="font-display text-[18px] font-semibold italic">New listing</h2>

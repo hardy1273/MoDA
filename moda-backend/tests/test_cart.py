@@ -23,7 +23,7 @@ class TestCartTotal:
 
 class TestMockPayments:
     def test_charge_succeeds_with_reference(self):
-        r = charge(12345, provider="mock")
+        r = charge(12345)
         assert r.ok and r.provider == "mock" and r.ref.startswith("mock_")
 
     def test_references_are_unique(self):
@@ -33,9 +33,10 @@ class TestMockPayments:
         r = charge(0)
         assert not r.ok
 
-    def test_unknown_provider_rejected(self):
-        r = charge(100, provider="stripe")
-        assert not r.ok and "stripe" in r.message.lower()
+    def test_charging_is_flagged_simulated(self):
+        # Card collection isn't built; the flag must say so even once
+        # Stripe is configured for payouts.
+        assert charge(100).simulated is True
 
 
 class TestCartSchemas:
