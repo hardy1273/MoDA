@@ -236,6 +236,41 @@ All knobs live in `.env`:
   doesn't depend on dataset size relative to a fixed `lists` parameter and it
   needs no rebuild after ingesting — nothing to tune at MVP scale.
 
+## Tagging
+
+Outfit tags originally came from the Unsplash *search query*, not the photo,
+so an image found by "streetwear outfit" was tagged streetwear even when it
+was plainly minimal. Audited against CLIP, only **42%** of stored tags matched
+what the image actually showed — which corrupted the tag-affinity boost, the
+"Recommended because…" explanations, the feed's theme filters, and the eval
+harness's own ground truth.
+
+`scripts/retag.py` reassigns tags by zero-shot scoring each outfit against the
+aesthetic vocabulary:
+
+```bash
+python -m scripts.retag --dry-run     # preview
+python -m scripts.retag               # apply
+```
+
+Two things make it work:
+
+- **Multi-label, not argmax.** An outfit genuinely can be both monochrome and
+  tailored; replacing one guess with another would lose that.
+- **z-scored within each outfit.** Raw cosine sits in a narrow band
+  (0.05–0.48) that's useless as a global threshold — what matters is which
+  aesthetics stand out *for this image*.
+
+Thresholds matter more than expected. At `--assign-z 1.0` tags are faithful
+but so broad ("minimal" covering 30% of the catalog) that they stop
+discriminating between users — lift over random fell from 5.1x to 3.1x. At the
+default `--assign-z 1.5 --max-tags 2` coverage stays under 20% and lift rises
+to **5.8x**. Re-runs score against the original CSV tags rather than the
+previous run's output, so experiments don't compound.
+
+Because tags became trustworthy, `TAG_AFFINITY_BOOST` was retuned 0.05 → 0.15
+(the effect saturates there; raising it further changes nothing).
+
 ## Tests & migrations
 
 ```bash

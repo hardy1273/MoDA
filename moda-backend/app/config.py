@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     diversity_lambda: float = 0.3
     # Recency half-life for like/dislike/save weighting; <= 0 disables decay
     feedback_half_life_days: float = 14.0
-    # Additive score bonus per outfit tag matching the user's taste (max 2 tags)
-    tag_affinity_boost: float = 0.05
+    # Additive score bonus per outfit tag matching the user's taste (max 2 tags).
+    # 0.15 since tags became image-derived (scripts/retag.py) and therefore
+    # trustworthy; the old 0.05 was tuned for noisy query-derived tags. Higher
+    # values change nothing — the effect saturates here.
+    tag_affinity_boost: float = 0.15
     # Score penalty per prior impression (capped at 5 views) — feed fatigue
     impression_penalty: float = 0.02
 
